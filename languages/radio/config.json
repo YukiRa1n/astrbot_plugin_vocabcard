@@ -1,0 +1,14 @@
+{
+  "lang_id": "radio",
+  "lang_name": "无线电法规",
+  "fonts": {
+    "question": "'Noto Sans SC', 'Microsoft YaHei', sans-serif",
+    "answer": "'Noto Sans SC', 'Microsoft YaHei', sans-serif"
+  },
+  "styles": {
+    "question_size": "16px",
+    "answer_size": "18px"
+  },
+  "card_size": [432, 540],
+  "theme_colors": ["#0f3460", "#16213e", "#1a1a2e", "#2F4F4F", "#006400"]
+}

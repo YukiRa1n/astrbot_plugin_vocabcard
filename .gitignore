@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.pyo
+test_output/
+test_*.png
+nul
+data/

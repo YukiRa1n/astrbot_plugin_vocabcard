@@ -1,0 +1,21 @@
+{
+  "lang_id": "idiom",
+  "lang_name": "成语",
+  "fonts": {
+    "word": "'Noto Serif SC', 'SimSun', serif",
+    "definition": "'Noto Sans SC', 'Microsoft YaHei', sans-serif"
+  },
+  "styles": {
+    "word_size": "56px",
+    "definition_size": "18px"
+  },
+  "card_size": [432, 540],
+  "theme_colors": [
+    "#8B0000",
+    "#2F4F4F",
+    "#4B0082",
+    "#006400",
+    "#1a1a2e",
+    "#533483"
+  ]
+}

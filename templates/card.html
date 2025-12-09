@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=432, height=540">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@700&family=Noto+Sans+SC:wght@400;500&display=swap');
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      width: 432px;
+      height: 540px;
+      font-family: 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+      overflow: hidden;
+    }
+
+    .card {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      border-radius: 0;
+      overflow: hidden;
+      box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+    }
+
+    /* 1. AI 动态背景图 */
+    .bg-layer {
+      position: absolute;
+      inset: 0;
+      background-image: url('{{bg_url}}');
+      background-size: cover;
+      background-position: {{bg_position}};
+    }
+
+    /* 2. 主题色叠加层 */
+    .tint-layer {
+      position: absolute;
+      inset: 0;
+      background-color: {{theme_color}};
+      opacity: 0.25;
+      mix-blend-mode: multiply;
+    }
+
+    /* 3. 渐变遮罩 - 增强可读性 */
+    .gradient-layer {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(to top,
+        rgba(0,0,0,0.65) 0%,
+        rgba(0,0,0,0.25) 40%,
+        rgba(0,0,0,0.05) 70%,
+        transparent 100%);
+    }
+
+    /* 边框光环 */
+    .border-ring {
+      position: absolute;
+      inset: 0;
+      border-radius: 0;
+      border: 1px solid rgba(255,255,255,0.2);
+      box-shadow: inset 0 0 0 1px rgba(0,0,0,0.05);
+      pointer-events: none;
+    }
+
+    /* 5. 内容容器 */
+    .content {
+      position: absolute;
+      bottom: 36px;
+      left: 36px;
+      right: 36px;
+      color: white;
+      z-index: 10;
+    }
+
+    /* 词性和音标 */
+    .meta {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      margin-bottom: 8px;
+      opacity: 0.9;
+    }
+
+    .pos-tag {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      padding: 4px 10px;
+      border: 1px solid rgba(110, 231, 183, 0.3);
+      background: rgba(110, 231, 183, 0.15);
+      color: #6ee7b7;
+      border-radius: 4px;
+    }
+
+    .phonetic {
+      font-family: 'Consolas', 'Source Code Pro', 'Courier New', monospace;
+      font-size: 15px;
+      color: rgba(255,255,255,0.7);
+      letter-spacing: 0.05em;
+    }
+
+    /* 单词标题 */
+    .word {
+      font-family: Georgia, 'Noto Serif SC', 'Times New Roman', serif;
+      font-size: 52px;
+      font-weight: 700;
+      margin-bottom: 12px;
+      text-shadow: 0 2px 8px rgba(0,0,0,0.4);
+      letter-spacing: -1px;
+      line-height: 1.1;
+    }
+
+    /* 释义区域 */
+    .definition {
+      margin-bottom: 20px;
+    }
+
+    .definition-cn {
+      font-size: 18px;
+      font-weight: 500;
+      line-height: 1.5;
+      margin-bottom: 4px;
+      text-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    }
+
+    /* 例句容器 - 磨砂玻璃效果 */
+    .example-box {
+      position: relative;
+      border-radius: 12px;
+      padding: 16px 18px;
+      margin-bottom: 20px;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+      overflow: hidden;
+    }
+
+    /* 底层：磨砂玻璃背景 */
+    .example-box::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: rgba(255,255,255,0.12);
+      backdrop-filter: blur(25px);
+      -webkit-backdrop-filter: blur(25px);
+      z-index: 1;
+    }
+
+    /* 顶层：渐变遮罩 */
+    .example-box::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(to top,
+        rgba(255,255,255,0.08) 0%,
+        rgba(255,255,255,0.03) 50%,
+        transparent 100%);
+      z-index: 2;
+    }
+
+    .example {
+      position: relative;
+      z-index: 3;
+      font-family: Georgia, 'Noto Serif SC', serif;
+      font-size: 14px;
+      font-style: italic;
+      line-height: 1.6;
+      color: rgba(255,255,255,0.98);
+    }
+
+    /* 底部标签区 */
+    .footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-top: 1px solid rgba(255,255,255,0.1);
+      padding-top: 16px;
+    }
+
+    .tags {
+      display: flex;
+      gap: 10px;
+    }
+
+    .tag {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      font-weight: 600;
+      color: rgba(255,255,255,0.45);
+    }
+
+    .brand {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      font-weight: 600;
+      color: rgba(255,255,255,0.45);
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <!-- 多层背景实现玻璃拟态 -->
+    <div class="bg-layer"></div>
+    <div class="tint-layer"></div>
+    <div class="gradient-layer"></div>
+    <div class="border-ring"></div>
+
+    <!-- 内容区 -->
+    <div class="content">
+      <!-- 词性和音标 -->
+      <div class="meta">
+        <span class="pos-tag">{{pos}}</span>
+        <span class="phonetic">{{phonetic}}</span>
+      </div>
+
+      <!-- 单词 -->
+      <h1 class="word">{{word}}</h1>
+
+      <!-- 释义 -->
+      <div class="definition">
+        <p class="definition-cn">{{definition_cn}}</p>
+      </div>
+
+      <!-- 例句 -->
+      <div class="example-box">
+        <p class="example">"{{example}}"</p>
+      </div>
+
+      <!-- 底部标签 -->
+      <div class="footer">
+        <div class="tags">
+          <span class="tag">{{tag1}}</span>
+          <span class="tag">{{tag2}}</span>
+        </div>
+        <span class="brand">{{brand}}</span>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

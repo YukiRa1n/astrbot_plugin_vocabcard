@@ -1,0 +1,31 @@
+{
+  "lang_id": "english",
+  "lang_name": "英语",
+  "fonts": {
+    "word": "Georgia, 'Noto Serif SC', 'Times New Roman', serif",
+    "phonetic": "'Consolas', 'Source Code Pro', 'Courier New', monospace",
+    "definition": "'Noto Sans SC', 'Microsoft YaHei', sans-serif",
+    "example": "Georgia, 'Noto Serif SC', serif"
+  },
+  "styles": {
+    "word_size": "52px",
+    "word_letter_spacing": "-1px",
+    "phonetic_size": "15px",
+    "definition_size": "18px",
+    "example_size": "14px",
+    "example_style": "italic"
+  },
+  "card_size": [432, 540],
+  "theme_colors": [
+    "#2F4F4F",
+    "#4B0082",
+    "#006400",
+    "#8B0000",
+    "#2F2F4F",
+    "#4A4A6A",
+    "#1a1a2e",
+    "#16213e",
+    "#0f3460",
+    "#533483"
+  ]
+}

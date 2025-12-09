@@ -1,0 +1,72 @@
+{
+  "current_language": {
+    "description": "当前卡组",
+    "type": "string",
+    "options": ["english", "japanese", "idiom", "classical", "radio"],
+    "hint": "卡组选项: english=英语六级, japanese=日语JLPT, idiom=成语, classical=古文, radio=无线电法规",
+    "default": "english"
+  },
+  "japanese_level": {
+    "description": "日语JLPT等级筛选",
+    "type": "string",
+    "options": ["all", "N1", "N2", "N3", "N4", "N5"],
+    "hint": "筛选日语词汇等级: all=全部(约1万词), N1=最难, N5=最简单",
+    "default": "all"
+  },
+  "target_groups": {
+    "description": "推送目标列表",
+    "type": "list",
+    "hint": "存储已注册的 unified_msg_origin，由 /vocab_register 命令自动管理",
+    "default": [],
+    "invisible": true
+  },
+  "push_time_generate": {
+    "description": "图片生成时间",
+    "type": "string",
+    "hint": "提前生成图片以等待背景图加载，格式: HH:MM",
+    "default": "07:30"
+  },
+  "push_time_send": {
+    "description": "图片推送时间",
+    "type": "string",
+    "hint": "每日推送单词卡片的时间，格式: HH:MM",
+    "default": "08:00"
+  },
+  "use_cdn_background": {
+    "description": "使用CDN背景图",
+    "type": "bool",
+    "hint": "使用阿里云 OSS CDN 加速背景图加载，优先级高于 AI 生成和本地图片",
+    "default": true
+  },
+  "enable_ai_background": {
+    "description": "启用AI生成背景",
+    "type": "bool",
+    "hint": "使用 Pollinations.ai 根据单词含义动态生成背景图片",
+    "default": false
+  },
+  "bg_load_timeout": {
+    "description": "背景图加载等待时间",
+    "type": "int",
+    "hint": "等待 AI 背景图加载的毫秒数，建议 3000-10000",
+    "default": 5000
+  },
+  "default_bg_url": {
+    "description": "默认背景图URL",
+    "type": "string",
+    "hint": "当AI背景关闭时使用的默认背景图片URL",
+    "default": ""
+  },
+  "learning_mode": {
+    "description": "学习模式",
+    "type": "string",
+    "options": ["sequential", "random"],
+    "hint": "sequential: 顺序学习; random: 随机学习",
+    "default": "random"
+  },
+  "reset_on_complete": {
+    "description": "学完后自动重置",
+    "type": "bool",
+    "hint": "所有单词推送完毕后自动从头开始",
+    "default": true
+  }
+}

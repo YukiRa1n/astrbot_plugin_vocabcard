@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=432, height=540">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&display=swap');
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      width: 432px;
+      height: 540px;
+      font-family: 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+      overflow: hidden;
+    }
+
+    .card {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      border-radius: 0;
+      overflow: hidden;
+      box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+    }
+
+    .bg-layer {
+      position: absolute;
+      inset: 0;
+      background-image: url('{{bg_url}}');
+      background-size: cover;
+      background-position: {{bg_position}};
+    }
+
+    .tint-layer {
+      position: absolute;
+      inset: 0;
+      background-color: {{theme_color}};
+      opacity: 0.25;
+      mix-blend-mode: multiply;
+    }
+
+    .gradient-layer {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(to top,
+        rgba(0,0,0,0.65) 0%,
+        rgba(0,0,0,0.25) 40%,
+        rgba(0,0,0,0.05) 70%,
+        transparent 100%);
+    }
+
+    .border-ring {
+      position: absolute;
+      inset: 0;
+      border-radius: 0;
+      border: 1px solid rgba(255,255,255,0.2);
+      box-shadow: inset 0 0 0 1px rgba(0,0,0,0.05);
+      pointer-events: none;
+    }
+
+    .content {
+      position: absolute;
+      bottom: 36px;
+      left: 36px;
+      right: 36px;
+      color: white;
+      z-index: 10;
+    }
+
+    .meta {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      margin-bottom: 8px;
+      opacity: 0.9;
+    }
+
+    .pos-tag {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      padding: 4px 10px;
+      border: 1px solid rgba(255,255,255,0.3);
+      background: rgba(255,255,255,0.15);
+      color: #fff;
+      border-radius: 4px;
+    }
+
+    .question-id {
+      font-family: monospace;
+      font-size: 14px;
+      color: rgba(255,255,255,0.7);
+    }
+
+    /* 问题区域 */
+    .question-box {
+      margin-bottom: 20px;
+    }
+
+    .question {
+      font-size: {{question_size}};
+      font-weight: 700;
+      line-height: 1.4;
+      text-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    }
+
+    /* 答案容器 - 磨砂玻璃效果 */
+    .answer-box {
+      position: relative;
+      border-radius: 12px;
+      padding: 16px 18px;
+      margin-bottom: 20px;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+      overflow: hidden;
+    }
+
+    /* 底层：磨砂玻璃背景 */
+    .answer-box::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: rgba(255,255,255,0.12);
+      backdrop-filter: blur(25px);
+      -webkit-backdrop-filter: blur(25px);
+      z-index: 1;
+    }
+
+    /* 顶层：渐变遮罩 */
+    .answer-box::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(to top,
+        rgba(255,255,255,0.08) 0%,
+        rgba(255,255,255,0.03) 50%,
+        transparent 100%);
+      z-index: 2;
+    }
+
+    .answer {
+      position: relative;
+      z-index: 3;
+      font-size: {{answer_size}};
+      font-weight: 500;
+      line-height: 1.6;
+      color: rgba(255,255,255,0.98);
+    }
+
+    .footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-top: 1px solid rgba(255,255,255,0.1);
+      padding-top: 16px;
+    }
+
+    .tags {
+      display: flex;
+      gap: 10px;
+    }
+
+    .tag {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      font-weight: 600;
+      color: rgba(255,255,255,0.45);
+    }
+
+    .brand {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      font-weight: 600;
+      color: rgba(255,255,255,0.45);
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="bg-layer"></div>
+    <div class="tint-layer"></div>
+    <div class="gradient-layer"></div>
+    <div class="border-ring"></div>
+
+    <div class="content">
+      <div class="meta">
+        <span class="pos-tag">法规</span>
+        <span class="question-id">{{question_id}}</span>
+      </div>
+
+      <div class="question-box">
+        <h1 class="question">{{question}}</h1>
+      </div>
+
+      <div class="answer-box">
+        <p class="answer">{{answer}}</p>
+      </div>
+
+      <div class="footer">
+        <div class="tags">
+          <span class="tag">{{tag1}}</span>
+          <span class="tag">{{tag2}}</span>
+        </div>
+        <span class="brand">{{brand}}</span>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "lang_id": "classical",
+  "lang_name": "古文",
+  "fonts": {
+    "word": "'Noto Serif SC', 'SimSun', serif",
+    "content": "'Noto Serif SC', 'SimSun', serif"
+  },
+  "styles": {
+    "keyword_size": "42px",
+    "content_size": "16px"
+  },
+  "card_size": [432, 540],
+  "theme_colors": ["#2F4F4F", "#4B0082", "#006400", "#8B0000", "#1a1a2e"]
+}
