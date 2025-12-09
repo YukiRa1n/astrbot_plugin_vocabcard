@@ -17,11 +17,6 @@ import json
 import os
 import random
 import traceback
-<<<<<<< HEAD
-from pathlib import Path
-from typing import Optional, Dict, List
-
-=======
 import urllib.parse
 from pathlib import Path
 from typing import Optional, Dict, List
@@ -35,7 +30,6 @@ from .languages.idiom.handler import IdiomLanguageHandler
 from .languages.classical.handler import ClassicalLanguageHandler
 from .languages.radio.handler import RadioLanguageHandler
 
->>>>>>> e631f42 (初始提交: 单词卡片插件)
 
 # 主题色列表 - 用于随机选择
 THEME_COLORS = [
@@ -100,24 +94,13 @@ def get_beijing_time() -> datetime.datetime:
     return utc_now + beijing_offset
 
 
-<<<<<<< HEAD
-@register("vocabcard", "Assistant", "每日英语单词卡片推送插件 - 玻璃拟态风格", "1.0.0")
-=======
 @register("vocabcard", "Assistant", "每日多语种单词卡片推送插件 - 支持英语/日语", "2.0.0")
->>>>>>> e631f42 (初始提交: 单词卡片插件)
 class VocabCardPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
         self.plugin_dir = Path(__file__).parent
         self.data_dir = self.plugin_dir / "data"
-<<<<<<< HEAD
-        self.template_path = self.plugin_dir / "templates" / "card.html"
-        self.backgrounds_dir = self.plugin_dir / "photos"  # 离线背景图目录
-
-        # 加载词汇数据和进度
-        self.words: List[Dict] = self._load_words()
-=======
         self.backgrounds_dir = self.plugin_dir / "photos"  # 离线背景图目录
 
         # 初始化语种管理器
@@ -143,28 +126,16 @@ class VocabCardPlugin(Star):
 
         # 加载词汇数据和进度
         self.words: List[WordEntry] = self._load_words()
->>>>>>> e631f42 (初始提交: 单词卡片插件)
         self.progress: Dict = self._load_progress()
         self.offline_backgrounds: List[Path] = self._load_offline_backgrounds()
 
         # 定时任务相关
         self._scheduler_task: Optional[asyncio.Task] = None
         self._cached_image_path: Optional[str] = None
-<<<<<<< HEAD
-        self._current_word: Optional[Dict] = None
-        self._today_generated: bool = False
-        self._last_check_date: str = ""
-
-        # Playwright 浏览器实例（延迟初始化）
-        self._browser = None
-        self._playwright = None
-
-=======
         self._current_word: Optional[WordEntry] = None
         self._today_generated: bool = False
         self._last_check_date: str = ""
 
->>>>>>> e631f42 (初始提交: 单词卡片插件)
     def _load_offline_backgrounds(self) -> List[Path]:
         """加载离线背景图列表"""
         if not self.backgrounds_dir.exists():
@@ -178,43 +149,13 @@ class VocabCardPlugin(Star):
         logger.info(f"已加载 {len(backgrounds)} 张离线背景图")
         return backgrounds
 
-<<<<<<< HEAD
-    def _get_background_url(self) -> str:
-        """获取背景图 URL（优先 CDN，失败则用本地图片）"""
-        # 优先使用 CDN 图片
-=======
     def _get_background_url(self, word: WordEntry) -> str:
         """获取背景图 URL（优先 CDN，其次 AI 生成，最后本地图片）"""
         # 优先使用 CDN 图片（阿里云 OSS）
->>>>>>> e631f42 (初始提交: 单词卡片插件)
         use_cdn = self.config.get("use_cdn_background", True)
         if use_cdn and CDN_BACKGROUNDS:
             return random.choice(CDN_BACKGROUNDS)
 
-<<<<<<< HEAD
-        # 回退到本地图片
-        if self.offline_backgrounds:
-            bg_path = random.choice(self.offline_backgrounds)
-            return f"file:///{bg_path.as_posix()}"
-
-        # 没有任何图片，返回纯色背景
-        return "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1080' height='1350'%3E%3Crect fill='%231a1a2e' width='100%25' height='100%25'/%3E%3C/svg%3E"
-
-    def _load_words(self) -> List[Dict]:
-        """加载词汇数据"""
-        words_file = self.data_dir / "words.json"
-        if words_file.exists():
-            try:
-                with open(words_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            except Exception as e:
-                logger.error(f"加载词汇数据失败: {e}")
-        return []
-
-    def _load_progress(self) -> Dict:
-        """加载学习进度"""
-        progress_file = self.data_dir / "progress.json"
-=======
         # 回退到 AI 生成（如果启用）
         use_ai = self.config.get("enable_ai_background", False)
         if use_ai:
@@ -265,27 +206,18 @@ class VocabCardPlugin(Star):
                     logger.warning(f"迁移旧进度文件失败: {e}")
 
         # 加载进度文件
->>>>>>> e631f42 (初始提交: 单词卡片插件)
         if progress_file.exists():
             try:
                 with open(progress_file, 'r', encoding='utf-8') as f:
                     return json.load(f)
             except Exception as e:
                 logger.error(f"加载进度数据失败: {e}")
-<<<<<<< HEAD
-        return {"sent_words": [], "last_push_date": ""}
-
-    def _save_progress(self):
-        """保存学习进度"""
-        progress_file = self.data_dir / "progress.json"
-=======
 
         return {"sent_words": [], "last_push_date": ""}
 
     def _save_progress(self):
         """保存学习进度（语种特定）"""
         progress_file = self.data_dir / f"progress_{self.current_language}.json"
->>>>>>> e631f42 (初始提交: 单词卡片插件)
         try:
             with open(progress_file, 'w', encoding='utf-8') as f:
                 json.dump(self.progress, f, ensure_ascii=False, indent=2)
@@ -294,11 +226,7 @@ class VocabCardPlugin(Star):
 
     async def initialize(self):
         """异步初始化"""
-<<<<<<< HEAD
-        logger.info(f"单词卡片插件初始化完成，已加载 {len(self.words)} 个单词")
-=======
         logger.info(f"单词卡片插件初始化完成 [语种: {self.current_language}]，已加载 {len(self.words)} 个单词")
->>>>>>> e631f42 (初始提交: 单词卡片插件)
 
     @filter.on_astrbot_loaded()
     async def on_loaded(self):
@@ -399,21 +327,13 @@ class VocabCardPlugin(Star):
         # 返回最近的目标时间
         return min(targets) if targets else None
 
-<<<<<<< HEAD
-    def _select_word(self) -> Optional[Dict]:
-=======
     def _select_word(self) -> Optional[WordEntry]:
->>>>>>> e631f42 (初始提交: 单词卡片插件)
         """选择一个未推送过的单词"""
         if not self.words:
             return None
 
         sent_words = set(self.progress.get("sent_words", []))
-<<<<<<< HEAD
-        available = [w for w in self.words if w["word"] not in sent_words]
-=======
         available = [w for w in self.words if w.word not in sent_words]
->>>>>>> e631f42 (初始提交: 单词卡片插件)
 
         # 如果全部推送完毕
         if not available:
@@ -440,21 +360,6 @@ class VocabCardPlugin(Star):
         self.progress["last_push_date"] = get_beijing_time().strftime("%Y-%m-%d")
         self._save_progress()
 
-<<<<<<< HEAD
-    def _render_template(self, word: Dict) -> str:
-        """渲染 HTML 模板"""
-        with open(self.template_path, 'r', encoding='utf-8') as f:
-            template = f.read()
-
-        # 获取背景图 URL
-        bg_url = self._get_background_url()
-
-        # 选择主题色
-        theme_color = random.choice(THEME_COLORS)
-
-        # 随机背景图位置（增加随机性）
-        # 生成类似 "30% 70%" 的随机位置
-=======
     def _generate_bg_prompt(self, word: WordEntry) -> str:
         """根据单词生成背景图提示词"""
         word_text = word.word
@@ -485,28 +390,10 @@ class VocabCardPlugin(Star):
         theme_color = random.choice(theme_colors) if theme_colors else random.choice(THEME_COLORS)
 
         # 随机背景图位置
->>>>>>> e631f42 (初始提交: 单词卡片插件)
         bg_x = random.randint(0, 100)
         bg_y = random.randint(0, 100)
         bg_position = f"{bg_x}% {bg_y}%"
 
-<<<<<<< HEAD
-        # 简单模板替换
-        html = template.replace("{{word}}", word.get("word", ""))
-        html = html.replace("{{phonetic}}", word.get("phonetic", ""))
-        html = html.replace("{{pos}}", word.get("pos", "").upper() or "WORD")
-        html = html.replace("{{definition_cn}}", word.get("definition_cn", ""))
-        html = html.replace("{{example}}", word.get("example", ""))
-        html = html.replace("{{bg_url}}", bg_url)
-        html = html.replace("{{theme_color}}", theme_color)
-        html = html.replace("{{bg_position}}", bg_position)
-
-        return html
-
-    async def _generate_card_image(self, word: Dict) -> str:
-        """使用 Playwright 生成单词卡片图片"""
-        from playwright.async_api import async_playwright
-=======
         # 使用 Handler 渲染卡片
         return self.current_handler.render_card(
             word,
@@ -518,91 +405,10 @@ class VocabCardPlugin(Star):
     async def _generate_card_image(self, word: WordEntry) -> str:
         """生成单词卡片图片"""
         from .core.image_renderer import get_image_renderer
->>>>>>> e631f42 (初始提交: 单词卡片插件)
 
         # 渲染 HTML
         html_content = self._render_template(word)
 
-<<<<<<< HEAD
-        # 临时文件路径
-        temp_html = self.plugin_dir / "temp_card.html"
-        temp_png = self.plugin_dir / f"card_{word['word']}.png"
-
-        # 保存 HTML
-        with open(temp_html, 'w', encoding='utf-8') as f:
-            f.write(html_content)
-
-        try:
-            async with async_playwright() as p:
-                # 启动浏览器
-                browser = await p.chromium.launch(headless=True)
-
-                # 创建超高清页面 - device_scale_factor=4 实现 4x 清晰度
-                # 输出分辨率：1728x2160 (432x4, 540x4) - 4K级别
-                page = await browser.new_page(
-                    viewport={'width': 432, 'height': 540},
-                    device_scale_factor=4  # 4倍清晰度，达到4K级别
-                )
-
-                # 加载页面
-                await page.goto(f'file:///{temp_html.as_posix()}')
-
-                # 等待背景图加载完成
-                # 方法1: 等待网络空闲（所有请求完成）
-                try:
-                    await page.wait_for_load_state('networkidle', timeout=20000)  # 增加到20秒
-                except:
-                    pass  # 超时也继续
-
-                # 方法2: 额外等待确保图片渲染
-                await page.wait_for_timeout(3000)  # 增加到3秒
-
-                # 检查背景图是否加载成功
-                bg_loaded = await page.evaluate('''() => {
-                    const bgLayer = document.querySelector('.bg-layer');
-                    if (!bgLayer) return false;
-                    const style = window.getComputedStyle(bgLayer);
-                    const bgImage = style.backgroundImage;
-                    if (!bgImage || bgImage === 'none') return false;
-
-                    // 创建一个图片对象来检测加载
-                    return new Promise((resolve) => {
-                        const url = bgImage.replace(/^url\\(['"']?/, '').replace(/['"']?\\)$/, '');
-                        const img = new Image();
-                        img.onload = () => resolve(true);
-                        img.onerror = () => resolve(false);
-                        img.src = url;
-                        // 8秒超时（高分辨率图片需要更长时间）
-                        setTimeout(() => resolve(false), 8000);
-                    });
-                }''')
-
-                if not bg_loaded:
-                    logger.warning("背景图加载可能未完成，继续截图...")
-                    # 再等待一会儿
-                    await page.wait_for_timeout(5000)
-
-                # 超高清截图
-                await page.screenshot(
-                    path=str(temp_png),
-                    type='png',
-                    scale='device'  # 使用设备缩放
-                    # quality 参数仅适用于 jpeg，PNG 已经是无损格式
-                )
-
-                await browser.close()
-
-            logger.info(f"卡片图片已生成: {temp_png}")
-            return str(temp_png)
-
-        except Exception as e:
-            logger.error(f"生成卡片图片失败: {e}")
-            raise
-        finally:
-            # 清理临时 HTML
-            if temp_html.exists():
-                temp_html.unlink()
-=======
         # 输出文件路径
         output_png = self.plugin_dir / f"card_{word.word}.png"
 
@@ -623,7 +429,6 @@ class VocabCardPlugin(Star):
         except Exception as e:
             logger.error(f"生成卡片图片失败: {e}")
             raise
->>>>>>> e631f42 (初始提交: 单词卡片插件)
 
     async def _generate_daily_card(self):
         """生成每日单词卡片"""
@@ -636,13 +441,8 @@ class VocabCardPlugin(Star):
             image_path = await self._generate_card_image(word)
             self._cached_image_path = image_path
             self._current_word = word
-<<<<<<< HEAD
-            self._mark_word_sent(word["word"])
-            logger.info(f"已生成每日单词卡片: {word['word']}")
-=======
             self._mark_word_sent(word.word)
             logger.info(f"已生成每日单词卡片: {word.word}")
->>>>>>> e631f42 (初始提交: 单词卡片插件)
         except Exception as e:
             logger.error(f"生成每日卡片失败: {e}")
 
@@ -658,11 +458,7 @@ class VocabCardPlugin(Star):
             return
 
         success_count = 0
-<<<<<<< HEAD
-        word_text = self._current_word.get("word", "单词") if self._current_word else "单词"
-=======
         word_text = self._current_word.word if self._current_word else "单词"
->>>>>>> e631f42 (初始提交: 单词卡片插件)
 
         for umo in target_groups:
             try:
@@ -700,11 +496,6 @@ class VocabCardPlugin(Star):
         # 静默生成，不发送提示
         try:
             image_path = await self._generate_card_image(word)
-<<<<<<< HEAD
-            # 标记单词已学习并保存进度
-            self._mark_word_sent(word["word"])
-=======
->>>>>>> e631f42 (初始提交: 单词卡片插件)
             yield event.image_result(image_path)
 
             # 清理图片
@@ -790,11 +581,7 @@ class VocabCardPlugin(Star):
                 image_path = await self._generate_card_image(word)
 
                 # 发送到当前会话
-<<<<<<< HEAD
-                yield event.plain_result(f"📚 测试单词: {word['word']}")
-=======
                 yield event.plain_result(f"📚 测试单词: {word.word}")
->>>>>>> e631f42 (初始提交: 单词卡片插件)
                 yield event.image_result(image_path)
 
                 # 清理
@@ -837,11 +624,7 @@ class VocabCardPlugin(Star):
                 try:
                     await self._generate_daily_card()
                     if self._cached_image_path:
-<<<<<<< HEAD
-                        word_text = self._current_word.get('word', '?') if self._current_word else '?'
-=======
                         word_text = self._current_word.word if self._current_word else '?'
->>>>>>> e631f42 (初始提交: 单词卡片插件)
                         yield event.plain_result(f"✅ 卡片生成成功: {word_text}")
                     else:
                         yield event.plain_result("❌ 卡片生成失败：缓存路径为空")
@@ -884,11 +667,7 @@ class VocabCardPlugin(Star):
             # 搜索指定单词
             word = None
             for w in self.words:
-<<<<<<< HEAD
-                if w["word"].lower() == word_input.lower():
-=======
                 if w.word.lower() == word_input.lower():
->>>>>>> e631f42 (初始提交: 单词卡片插件)
                     word = w
                     break
             if not word:
@@ -901,15 +680,6 @@ class VocabCardPlugin(Star):
                 return
 
         # 显示单词详情
-<<<<<<< HEAD
-        info_msg = f"""🔍 单词预览
-━━━━━━━━━━━━━━━━━━━━
-📝 单词: {word.get('word', '')}
-🔊 音标: {word.get('phonetic', '')}
-📚 词性: {word.get('pos', '')}
-📖 释义: {word.get('definition_cn', '')}
-💬 例句: {word.get('example', '')[:50]}...
-=======
         example_preview = (word.example or "")[:50]
         info_msg = f"""🔍 单词预览
 ━━━━━━━━━━━━━━━━━━━━
@@ -918,7 +688,6 @@ class VocabCardPlugin(Star):
 📚 词性: {word.pos or ''}
 📖 释义: {word.definition}
 💬 例句: {example_preview}...
->>>>>>> e631f42 (初始提交: 单词卡片插件)
 ━━━━━━━━━━━━━━━━━━━━
 ⏳ 正在生成卡片图片..."""
         yield event.plain_result(info_msg)
@@ -963,11 +732,7 @@ class VocabCardPlugin(Star):
                 yield event.plain_result("❌ 卡片生成失败")
                 return
 
-<<<<<<< HEAD
-            yield event.plain_result(f"✅ 卡片已生成: {self._current_word.get('word', '?')}")
-=======
             yield event.plain_result(f"✅ 卡片已生成: {self._current_word.word if self._current_word else '?'}")
->>>>>>> e631f42 (初始提交: 单词卡片插件)
 
             # 2. 推送
             yield event.plain_result("⏳ 步骤2: 推送到所有已注册群聊...")
@@ -980,8 +745,6 @@ class VocabCardPlugin(Star):
             logger.error(f"立即推送失败: {traceback.format_exc()}")
             yield event.plain_result(f"❌ 推送失败: {e}")
 
-<<<<<<< HEAD
-=======
     @filter.command("vocab_lang")
     async def cmd_switch_language(self, event: AstrMessageEvent, lang_id: str = ""):
         """
@@ -1037,7 +800,6 @@ class VocabCardPlugin(Star):
             logger.error(f"切换语种失败: {e}")
             yield event.plain_result(f"❌ 切换失败: {e}")
 
->>>>>>> e631f42 (初始提交: 单词卡片插件)
     @filter.command("vocab_help")
     async def cmd_help(self, event: AstrMessageEvent):
         """显示帮助信息"""
@@ -1050,10 +812,7 @@ class VocabCardPlugin(Star):
 /vocab_register - 注册每日推送
 /vocab_unregister - 取消每日推送
 /vocab_test - 测试推送功能
-<<<<<<< HEAD
-=======
 /vocab_lang [语种ID] - 切换语种
->>>>>>> e631f42 (初始提交: 单词卡片插件)
 /vocab_help - 显示此帮助
 ━━━━━━━━━━━━━━━━━━━━
 💡 注册后每天 8:00 自动推送"""
