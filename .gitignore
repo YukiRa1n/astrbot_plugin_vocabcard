@@ -5,3 +5,6 @@ test_output/
 test_*.png
 nul
 data/
+
+.claude/
+.spec-workflow/
