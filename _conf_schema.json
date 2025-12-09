@@ -1,6 +1,4 @@
 {
-<<<<<<< HEAD
-=======
   "current_language": {
     "description": "当前卡组",
     "type": "string",
@@ -15,7 +13,6 @@
     "hint": "筛选日语词汇等级: all=全部(约1万词), N1=最难, N5=最简单",
     "default": "all"
   },
->>>>>>> e631f42 (初始提交: 单词卡片插件)
   "target_groups": {
     "description": "推送目标列表",
     "type": "list",
@@ -26,11 +23,7 @@
   "push_time_generate": {
     "description": "图片生成时间",
     "type": "string",
-<<<<<<< HEAD
-    "hint": "提前生成图片，格式: HH:MM",
-=======
     "hint": "提前生成图片以等待背景图加载，格式: HH:MM",
->>>>>>> e631f42 (初始提交: 单词卡片插件)
     "default": "07:30"
   },
   "push_time_send": {
@@ -39,8 +32,6 @@
     "hint": "每日推送单词卡片的时间，格式: HH:MM",
     "default": "08:00"
   },
-<<<<<<< HEAD
-=======
   "use_cdn_background": {
     "description": "使用CDN背景图",
     "type": "bool",
@@ -65,7 +56,6 @@
     "hint": "当AI背景关闭时使用的默认背景图片URL",
     "default": ""
   },
->>>>>>> e631f42 (初始提交: 单词卡片插件)
   "learning_mode": {
     "description": "学习模式",
     "type": "string",
@@ -78,14 +68,5 @@
     "type": "bool",
     "hint": "所有单词推送完毕后自动从头开始",
     "default": true
-<<<<<<< HEAD
-  },
-  "use_cdn_background": {
-    "description": "使用CDN背景图",
-    "type": "bool",
-    "hint": "使用阿里云 OSS 加载背景图片，关闭则使用本地图片",
-    "default": true
-=======
->>>>>>> e631f42 (初始提交: 单词卡片插件)
   }
 }

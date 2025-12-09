@@ -34,11 +34,7 @@
       inset: 0;
       background-image: url('{{bg_url}}');
       background-size: cover;
-<<<<<<< HEAD
-      background-position: {{bg_position}}; /* 随机位置 */
-=======
       background-position: {{bg_position}};
->>>>>>> e631f42 (初始提交: 单词卡片插件)
     }
 
     /* 2. 主题色叠加层 */
@@ -61,18 +57,6 @@
         transparent 100%);
     }
 
-<<<<<<< HEAD
-    /* 4. 毛玻璃纹理 - 已移除，仅在例句气泡使用 */
-    /* .glass-layer {
-      position: absolute;
-      inset: 0;
-      backdrop-filter: blur(2px);
-      -webkit-backdrop-filter: blur(2px);
-      opacity: 0.3;
-    } */
-
-=======
->>>>>>> e631f42 (初始提交: 单词卡片插件)
     /* 边框光环 */
     .border-ring {
       position: absolute;
@@ -85,19 +69,10 @@
 
     /* 5. 内容容器 */
     .content {
-<<<<<<< HEAD
-      position: relative;
-      height: 100%;
-      display: flex;
-      flex-direction: column;
-      justify-content: flex-end;
-      padding: 36px;
-=======
       position: absolute;
       bottom: 36px;
       left: 36px;
       right: 36px;
->>>>>>> e631f42 (初始提交: 单词卡片插件)
       color: white;
       z-index: 10;
     }
@@ -154,16 +129,9 @@
       text-shadow: 0 1px 3px rgba(0,0,0,0.3);
     }
 
-<<<<<<< HEAD
-    /* 例句容器 - 渐变磨砂玻璃效果 */
-    .example-box {
-      position: relative;
-      border-left: 2px solid rgba(255,255,255,0.3);
-=======
     /* 例句容器 - 磨砂玻璃效果 */
     .example-box {
       position: relative;
->>>>>>> e631f42 (初始提交: 单词卡片插件)
       border-radius: 12px;
       padding: 16px 18px;
       margin-bottom: 20px;
@@ -182,11 +150,7 @@
       z-index: 1;
     }
 
-<<<<<<< HEAD
-    /* 顶层：渐变遮罩（从下到上逐渐透明） */
-=======
     /* 顶层：渐变遮罩 */
->>>>>>> e631f42 (初始提交: 单词卡片插件)
     .example-box::after {
       content: '';
       position: absolute;
@@ -245,10 +209,6 @@
     <div class="bg-layer"></div>
     <div class="tint-layer"></div>
     <div class="gradient-layer"></div>
-<<<<<<< HEAD
-    <!-- glass-layer 已移除，仅在例句气泡使用磨砂效果 -->
-=======
->>>>>>> e631f42 (初始提交: 单词卡片插件)
     <div class="border-ring"></div>
 
     <!-- 内容区 -->
@@ -275,17 +235,10 @@
       <!-- 底部标签 -->
       <div class="footer">
         <div class="tags">
-<<<<<<< HEAD
-          <span class="tag">#CET6</span>
-          <span class="tag">#Daily</span>
-        </div>
-        <span class="brand">Daily Vocab</span>
-=======
           <span class="tag">{{tag1}}</span>
           <span class="tag">{{tag2}}</span>
         </div>
         <span class="brand">{{brand}}</span>
->>>>>>> e631f42 (初始提交: 单词卡片插件)
       </div>
     </div>
   </div>
