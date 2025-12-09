@@ -13,20 +13,25 @@ class WordLoader:
     统一的词汇数据加载接口
 
     支持多种数据格式的加载和验证
+    支持共享词库文件（多卡组共用同一数据源）
     """
 
-    def __init__(self, data_path: Path):
+    def __init__(self, data_path: Path, shared_words_path: str = None):
         """
         初始化加载器
 
         Args:
             data_path: 数据文件路径
+            shared_words_path: 共享词库文件路径（相对于 languages 目录）
         """
         self.data_path = data_path
+        self.shared_words_path = shared_words_path
 
     def load_json(self) -> List[Dict]:
         """
         加载 JSON 格式词库
+
+        优先使用共享词库路径（如果配置了），否则使用默认路径
 
         Returns:
             词汇数据列表
@@ -35,10 +40,13 @@ class WordLoader:
             FileNotFoundError: 文件不存在
             ValueError: 数据格式无效
         """
-        if not self.data_path.exists():
-            raise FileNotFoundError(f"词库文件不存在: {self.data_path}")
+        # 确定实际加载的文件路径
+        target_path = self._get_target_path()
 
-        with open(self.data_path, 'r', encoding='utf-8') as f:
+        if not target_path.exists():
+            raise FileNotFoundError(f"词库文件不存在: {target_path}")
+
+        with open(target_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
 
         # 数据验证
@@ -70,6 +78,25 @@ class WordLoader:
             #     return False
 
         return True
+
+    def _get_target_path(self) -> Path:
+        """
+        获取实际的词库文件路径
+
+        优先使用共享词库路径，否则使用默认路径
+
+        Returns:
+            词库文件路径
+        """
+        if self.shared_words_path:
+            # 共享路径是相对于 languages 目录的
+            # data_path 格式: languages/{lang_id}/words.json
+            # 所以 data_path.parent.parent 就是 languages 目录
+            languages_dir = self.data_path.parent.parent
+            shared_path = languages_dir / self.shared_words_path
+            if shared_path.exists():
+                return shared_path
+        return self.data_path
 
     def load_csv(self, delimiter: str = ',') -> List[Dict]:
         """

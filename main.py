@@ -108,6 +108,12 @@ class VocabCardPlugin(Star):
         # 注册语种处理器
         self.lang_manager.register_language("english", EnglishLanguageHandler)
         self.lang_manager.register_language("japanese", JapaneseLanguageHandler)
+        # 注册日语 JLPT 分级卡组（N1-N5 独立进度）
+        self.lang_manager.register_language("japanese_n1", JapaneseLanguageHandler)
+        self.lang_manager.register_language("japanese_n2", JapaneseLanguageHandler)
+        self.lang_manager.register_language("japanese_n3", JapaneseLanguageHandler)
+        self.lang_manager.register_language("japanese_n4", JapaneseLanguageHandler)
+        self.lang_manager.register_language("japanese_n5", JapaneseLanguageHandler)
         self.lang_manager.register_language("idiom", IdiomLanguageHandler)
         self.lang_manager.register_language("classical", ClassicalLanguageHandler)
         self.lang_manager.register_language("radio", RadioLanguageHandler)

@@ -2,8 +2,8 @@
   "current_language": {
     "description": "当前卡组",
     "type": "string",
-    "options": ["english", "japanese", "idiom", "classical", "radio"],
-    "hint": "卡组选项: english=英语六级, japanese=日语JLPT, idiom=成语, classical=古文, radio=无线电法规",
+    "options": ["english", "japanese", "japanese_n1", "japanese_n2", "japanese_n3", "japanese_n4", "japanese_n5", "idiom", "classical", "radio"],
+    "hint": "卡组选项: english=英语六级, japanese=日语全部, japanese_n1~n5=日语分级(独立进度), idiom=成语, classical=古文, radio=无线电法规",
     "default": "english"
   },
   "japanese_level": {

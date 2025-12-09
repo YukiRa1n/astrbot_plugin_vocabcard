@@ -44,7 +44,7 @@ class IdiomLanguageHandler(BaseLanguageHandler):
             "word_size": self.config.styles.get("word_size", "56px"),
             "definition_size": self.config.styles.get("definition_size", "18px"),
             "tag1": "#成语",
-            "tag2": "#国学",
+            "tag2": "#Daily",
             "brand": "成语卡片"
         }
 

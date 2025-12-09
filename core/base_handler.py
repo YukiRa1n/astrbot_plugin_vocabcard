@@ -72,8 +72,9 @@ class BaseLanguageHandler(ABC):
         self.lang_dir = lang_dir
         self.words: List[WordEntry] = []
 
-        # 初始化加载器和渲染器
-        self.loader = WordLoader(lang_dir / "words.json")
+        # 初始化加载器（支持共享词库路径）
+        shared_path = getattr(config, 'shared_words_path', None)
+        self.loader = WordLoader(lang_dir / "words.json", shared_path)
         # 使用根目录下的 templates
         self.renderer = CardRenderer(lang_dir.parent.parent / "templates")
 

@@ -20,6 +20,8 @@ class LanguageConfig:
     - 样式配置
     - 卡片尺寸
     - 主题色
+    - 等级过滤器（用于日语 JLPT 分级）
+    - 共享词库路径（用于多卡组共享数据）
     """
 
     lang_id: str
@@ -28,6 +30,8 @@ class LanguageConfig:
     styles: Dict[str, any]
     card_size: tuple = (432, 540)
     theme_colors: List[str] = field(default_factory=list)
+    level_filter: str = "all"  # JLPT 等级过滤器
+    shared_words_path: Optional[str] = None  # 共享词库文件路径（相对于 languages 目录）
 
     @classmethod
     def from_json(cls, config_path: Path) -> 'LanguageConfig':
@@ -52,6 +56,12 @@ class LanguageConfig:
 
         if 'theme_colors' not in data:
             data['theme_colors'] = []
+
+        if 'level_filter' not in data:
+            data['level_filter'] = "all"
+
+        if 'shared_words_path' not in data:
+            data['shared_words_path'] = None
 
         return cls(**data)
 

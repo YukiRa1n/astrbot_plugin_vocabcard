@@ -43,7 +43,7 @@ class ClassicalLanguageHandler(BaseLanguageHandler):
             "keyword_size": self.config.styles.get("keyword_size", "42px"),
             "content_size": self.config.styles.get("content_size", "16px"),
             "tag1": "#古文",
-            "tag2": "#经典",
+            "tag2": "#Daily",
             "brand": "古文卡片"
         }
         return self.renderer.render("card_classical.html", template_vars)

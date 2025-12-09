@@ -21,7 +21,7 @@ class JapaneseLanguageHandler(BaseLanguageHandler):
     - 提供日语特定的样式和字体配置
     """
 
-    def load_words(self, level_filter: str = "all") -> List[WordEntry]:
+    def load_words(self, level_filter: str = None) -> List[WordEntry]:
         """
         加载日语词汇
 
@@ -32,19 +32,23 @@ class JapaneseLanguageHandler(BaseLanguageHandler):
 
         Args:
             level_filter: JLPT等级筛选，可选值: all, N1, N2, N3, N4, N5
+                         如果为 None，则使用配置文件中的 level_filter
 
         Returns:
             WordEntry 列表
         """
+        # 优先使用传入参数，否则使用配置中的默认值
+        filter_level = level_filter if level_filter is not None else getattr(self.config, 'level_filter', 'all')
+
         raw_data = self.loader.load_json()
 
         words = []
         for item in raw_data:
             # 等级筛选
             item_level = item.get("level", "")  # 格式: JLPT-N4
-            if level_filter != "all":
+            if filter_level != "all":
                 # 检查是否匹配指定等级
-                if f"JLPT-{level_filter}" not in item_level and level_filter not in item_level:
+                if f"JLPT-{filter_level}" not in item_level and filter_level not in item_level:
                     continue
 
             word_entry = WordEntry(

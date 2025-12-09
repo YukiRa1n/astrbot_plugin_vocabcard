@@ -1,0 +1,31 @@
+{
+  "lang_id": "japanese_n5",
+  "lang_name": "日语 N5",
+  "level_filter": "N5",
+  "shared_words_path": "japanese/words.json",
+  "fonts": {
+    "word": "'Noto Serif JP', 'Yu Mincho', 'MS Mincho', serif",
+    "phonetic": "'Noto Sans JP', 'Hiragino Sans', 'MS Gothic', sans-serif",
+    "definition": "'Noto Sans SC', 'Microsoft YaHei', sans-serif",
+    "example": "'Noto Serif JP', 'Yu Mincho', serif"
+  },
+  "styles": {
+    "word_size": "48px",
+    "word_letter_spacing": "0.05em",
+    "phonetic_size": "16px",
+    "definition_size": "18px",
+    "example_size": "14px",
+    "example_style": "normal"
+  },
+  "card_size": [432, 540],
+  "theme_colors": [
+    "#8B4513",
+    "#DC143C",
+    "#4B0082",
+    "#2F4F4F",
+    "#191970",
+    "#8B0000",
+    "#483D8B",
+    "#2F2F4F"
+  ]
+}
