@@ -89,9 +89,8 @@ CDN_BACKGROUNDS = [
 
 def get_beijing_time() -> datetime.datetime:
     """获取北京时间（东八区）- 兼容 Docker 容器 UTC 时间"""
-    utc_now = datetime.datetime.utcnow()
-    beijing_offset = datetime.timedelta(hours=8)
-    return utc_now + beijing_offset
+    beijing_tz = datetime.timezone(datetime.timedelta(hours=8))
+    return datetime.datetime.now(beijing_tz)
 
 
 @register("vocabcard", "Assistant", "每日多语种单词卡片推送插件 - 支持英语/日语", "2.0.0")
@@ -135,6 +134,9 @@ class VocabCardPlugin(Star):
         self._current_word: Optional[WordEntry] = None
         self._today_generated: bool = False
         self._last_check_date: str = ""
+
+        # 进度文件保存锁（防止并发写入冲突）
+        self._progress_lock = asyncio.Lock()
 
     def _load_offline_backgrounds(self) -> List[Path]:
         """加载离线背景图列表"""
@@ -215,14 +217,15 @@ class VocabCardPlugin(Star):
 
         return {"sent_words": [], "last_push_date": ""}
 
-    def _save_progress(self):
-        """保存学习进度（语种特定）"""
-        progress_file = self.data_dir / f"progress_{self.current_language}.json"
-        try:
-            with open(progress_file, 'w', encoding='utf-8') as f:
-                json.dump(self.progress, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            logger.error(f"保存进度数据失败: {e}")
+    async def _save_progress(self):
+        """保存学习进度（语种特定）- 使用锁防止并发写入"""
+        async with self._progress_lock:
+            progress_file = self.data_dir / f"progress_{self.current_language}.json"
+            try:
+                with open(progress_file, 'w', encoding='utf-8') as f:
+                    json.dump(self.progress, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                logger.error(f"保存进度数据失败: {e}")
 
     async def initialize(self):
         """异步初始化"""
@@ -296,7 +299,8 @@ class VocabCardPlugin(Star):
         try:
             parts = time_str.split(':')
             return (int(parts[0]), int(parts[1]))
-        except:
+        except (ValueError, IndexError) as e:
+            logger.warning(f"时间格式解析失败 '{time_str}': {e}，使用默认值 08:00")
             return (8, 0)  # 默认 8:00
 
     def _calculate_next_target_time(self, now: datetime.datetime, gen_time: tuple, push_time: tuple) -> Optional[datetime.datetime]:
@@ -327,7 +331,7 @@ class VocabCardPlugin(Star):
         # 返回最近的目标时间
         return min(targets) if targets else None
 
-    def _select_word(self) -> Optional[WordEntry]:
+    async def _select_word(self) -> Optional[WordEntry]:
         """选择一个未推送过的单词"""
         if not self.words:
             return None
@@ -340,7 +344,7 @@ class VocabCardPlugin(Star):
             if self.config.get("reset_on_complete", True):
                 # 重置进度
                 self.progress["sent_words"] = []
-                self._save_progress()
+                await self._save_progress()
                 available = self.words
                 logger.info("所有单词已推送完毕，已重置进度")
             else:
@@ -353,12 +357,12 @@ class VocabCardPlugin(Star):
             return available[0]
         return random.choice(available)
 
-    def _mark_word_sent(self, word: str):
+    async def _mark_word_sent(self, word: str):
         """标记单词已推送"""
         if word not in self.progress["sent_words"]:
             self.progress["sent_words"].append(word)
         self.progress["last_push_date"] = get_beijing_time().strftime("%Y-%m-%d")
-        self._save_progress()
+        await self._save_progress()
 
     def _generate_bg_prompt(self, word: WordEntry) -> str:
         """根据单词生成背景图提示词"""
@@ -432,7 +436,7 @@ class VocabCardPlugin(Star):
 
     async def _generate_daily_card(self):
         """生成每日单词卡片"""
-        word = self._select_word()
+        word = await self._select_word()
         if not word:
             logger.warning("没有可用的单词")
             return
@@ -441,7 +445,7 @@ class VocabCardPlugin(Star):
             image_path = await self._generate_card_image(word)
             self._cached_image_path = image_path
             self._current_word = word
-            self._mark_word_sent(word.word)
+            await self._mark_word_sent(word.word)
             logger.info(f"已生成每日单词卡片: {word.word}")
         except Exception as e:
             logger.error(f"生成每日卡片失败: {e}")
@@ -479,8 +483,8 @@ class VocabCardPlugin(Star):
         try:
             if os.path.exists(self._cached_image_path):
                 os.remove(self._cached_image_path)
-        except:
-            pass
+        except OSError as e:
+            logger.warning(f"清理缓存图片失败: {e}")
         self._cached_image_path = None
 
     # ========== 用户命令 ==========
@@ -488,7 +492,7 @@ class VocabCardPlugin(Star):
     @filter.command("vocab")
     async def cmd_vocab(self, event: AstrMessageEvent):
         """手动获取一个单词卡片"""
-        word = self._select_word()
+        word = await self._select_word()
         if not word:
             yield event.plain_result("没有可用的单词数据")
             return
@@ -501,8 +505,8 @@ class VocabCardPlugin(Star):
             # 清理图片
             try:
                 os.remove(image_path)
-            except:
-                pass
+            except OSError as e:
+                logger.warning(f"清理临时图片失败: {e}")
         except Exception as e:
             logger.error(f"生成卡片失败: {e}")
             yield event.plain_result(f"❌ 生成卡片失败: {e}")
@@ -573,7 +577,7 @@ class VocabCardPlugin(Star):
         if delay == 0:
             try:
                 # 生成卡片（静默）
-                word = self._select_word()
+                word = await self._select_word()
                 if not word:
                     yield event.plain_result("没有可用的单词")
                     return
@@ -587,8 +591,8 @@ class VocabCardPlugin(Star):
                 # 清理
                 try:
                     os.remove(image_path)
-                except:
-                    pass
+                except OSError as e:
+                    logger.warning(f"清理临时图片失败: {e}")
 
             except Exception as e:
                 logger.error(f"测试推送失败: {e}")
@@ -674,7 +678,7 @@ class VocabCardPlugin(Star):
                 yield event.plain_result(f"未找到单词: {word_input}")
                 return
         else:
-            word = self._select_word()
+            word = await self._select_word()
             if not word:
                 yield event.plain_result("没有可用的单词数据")
                 return
@@ -701,8 +705,8 @@ class VocabCardPlugin(Star):
             # 清理
             try:
                 os.remove(image_path)
-            except:
-                pass
+            except OSError as e:
+                logger.warning(f"清理临时图片失败: {e}")
 
         except Exception as e:
             import traceback
@@ -822,4 +826,8 @@ class VocabCardPlugin(Star):
         """插件卸载时取消定时任务"""
         if self._scheduler_task:
             self._scheduler_task.cancel()
+            try:
+                await self._scheduler_task
+            except asyncio.CancelledError:
+                pass
         logger.info("单词卡片插件已卸载")

@@ -87,39 +87,37 @@ class ImageRenderer:
 
         # 写入临时 HTML 文件
         with tempfile.NamedTemporaryFile(
-            mode='w', suffix='.html', delete=False, encoding='utf-8'
+            mode='w', suffix='.html', delete=True, encoding='utf-8'
         ) as f:
             f.write(html_content)
-            temp_html = Path(f.name)
+            f.flush()  # 确保写入磁盘
+            temp_html_path = f.name
 
-        try:
-            async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=True)
-                page = await browser.new_page(
-                    viewport={"width": width, "height": height},
-                    device_scale_factor=scale
-                )
-                await page.goto(temp_html.as_uri())
+            try:
+                async with async_playwright() as p:
+                    browser = await p.chromium.launch(headless=True)
+                    page = await browser.new_page(
+                        viewport={"width": width, "height": height},
+                        device_scale_factor=scale
+                    )
+                    await page.goto(Path(temp_html_path).as_uri())
 
-                # 等待背景图加载
-                try:
-                    await page.wait_for_load_state("networkidle", timeout=15000)
-                except:
-                    pass
-                await page.wait_for_timeout(2000)
+                    # 等待背景图加载
+                    try:
+                        await page.wait_for_load_state("networkidle", timeout=15000)
+                    except Exception as e:
+                        logger.debug(f"背景图加载超时: {e}")
+                    await page.wait_for_timeout(2000)
 
-                # 截图
-                await page.screenshot(path=output_path, type="png", scale="device")
-                await browser.close()
+                    # 截图
+                    await page.screenshot(path=output_path, type="png", scale="device")
+                    await browser.close()
 
-            logger.info(f"图片已生成: {output_path}")
-            return output_path
-        except Exception as e:
-            logger.error(f"渲染图片失败: {e}")
-            raise
-        finally:
-            if temp_html.exists():
-                temp_html.unlink()
+                logger.info(f"图片已生成: {output_path}")
+                return output_path
+            except Exception as e:
+                logger.error(f"渲染图片失败: {e}")
+                raise
 
     async def render_to_bytes(
         self,
@@ -162,8 +160,8 @@ class ImageRenderer:
                 # 等待背景图加载
                 try:
                     await page.wait_for_load_state("networkidle", timeout=15000)
-                except:
-                    pass
+                except Exception as e:
+                    logger.debug(f"背景图加载超时: {e}")
                 await page.wait_for_timeout(2000)
 
                 # 截图返回字节
