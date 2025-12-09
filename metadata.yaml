@@ -1,4 +1,4 @@
-name: astrbot_plugin_vocabularycard
+name: 每日一词[单词卡片]
 desc: 每日定时推送玻璃拟态风格的学习卡片，支持英语、日语、成语、文言文及无线电法规等多种题库，内置丰富内容，支持进度追踪和随机学习
 version: v1.0.1
 author: 雪语
