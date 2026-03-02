@@ -10,8 +10,11 @@ from astrbot.api.star import Context, Star, register
 from astrbot.api import logger, AstrBotConfig
 from astrbot.api.event import MessageChain
 import astrbot.api.message_components as Comp
+from astrbot.api.all import * # 确保引入了 Record 等组件
 
 import asyncio
+import aiohttp
+import tempfile
 import datetime
 import json
 import os
@@ -223,7 +226,30 @@ class VocabCardPlugin(Star):
                 logger.error(f"加载进度数据失败: {e}")
 
         return {"sent_words": [], "last_push_date": ""}
-
+    async def _download_audio(self, word_text: str, accent: str = "us") -> str:
+        """
+        异步下载有道词典的发音 MP3
+        :param accent: "us" 美音, "uk" 英音
+        :return: 临时音频文件的路径，失败则返回 None
+        """
+        type_code = 2 if accent == "us" else 1
+        url = f"https://dict.youdao.com/dictvoice?type={type_code}&audio={word_text}"
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=5) as response:
+                    if response.status == 200:
+                        audio_content = await response.read()
+                        
+                        # 参考你的哈基米插件：使用 tempfile 生成带有 .mp3 后缀的临时文件
+                        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as temp_file:
+                            temp_file.write(audio_content)
+                            return temp_file.name
+        except Exception as e:
+            # 如果你有 logger，这里可以换成 logger.error
+            print(f"下载 [{word_text}] 的音频失败: {e}")
+            
+        return None
     async def _save_progress(self):
         """保存学习进度（语种特定）- 使用锁防止并发写入"""
         async with self._progress_lock:
@@ -514,10 +540,14 @@ class VocabCardPlugin(Star):
 
     # ========== 用户命令 ==========
 
-    @filter.command("vocab")
+    @filter.command("vocab", alias=["每日一词","单词卡片"])
     async def cmd_vocab(self, event: AstrMessageEvent):
         """手动获取一个单词卡片"""
         word = await self._select_word()
+        word_text=word.word
+        temp_files = []
+        current = self.current_language
+
         if not word:
             yield event.plain_result("没有可用的单词数据")
             return
@@ -525,18 +555,30 @@ class VocabCardPlugin(Star):
         # 静默生成，不发送提示
         try:
             image_path = await self._generate_card_image(word)
+            temp_files.append(image_path)
             yield event.image_result(image_path)
-
+            if current == "english":
+                audio_path = await self._download_audio(word_text, accent="us")
+                if audio_path:
+                    temp_files.append(audio_path)
+                
+                # 构建并发送语音消息链
+                    chain = [Record.fromFileSystem(audio_path)]
+                    yield event.chain_result(chain)
+                else:
+                    yield event.plain_result("⚠️ 未能获取到该单词的语音发音")
             # 清理图片
-            try:
-                os.remove(image_path)
-            except OSError as e:
-                logger.warning(f"清理临时图片失败: {e}")
+            for file_path in temp_files:
+                if file_path and os.path.exists(file_path):
+                    try:
+                        os.remove(file_path)
+                    except:
+                        pass
         except Exception as e:
             logger.error(f"生成卡片失败: {e}")
             yield event.plain_result(f"❌ 生成卡片失败: {e}")
 
-    @filter.command("vocab_status")
+    @filter.command("vocab_status", alias=["学习进度","单词进度"])
     async def cmd_status(self, event: AstrMessageEvent):
         """查看学习进度"""
         total = len(self.words)
@@ -553,7 +595,7 @@ class VocabCardPlugin(Star):
 ━━━━━━━━━━━━━━━━"""
         yield event.plain_result(msg)
 
-    @filter.command("vocab_register")
+    @filter.command("vocab_register", alias=["注册推送"])
     async def cmd_register(self, event: AstrMessageEvent):
         """在当前会话注册接收每日单词推送"""
         umo = event.unified_msg_origin
@@ -570,7 +612,7 @@ class VocabCardPlugin(Star):
         push_time = self.config.get("push_time_send", "08:00")
         yield event.plain_result(f"注册成功！🎉\n将在每天 {push_time} 推送单词卡片")
 
-    @filter.command("vocab_unregister")
+    @filter.command("vocab_unregister", alias=["取消推送"])
     async def cmd_unregister(self, event: AstrMessageEvent):
         """取消当前会话的每日单词推送"""
         umo = event.unified_msg_origin
@@ -829,7 +871,7 @@ class VocabCardPlugin(Star):
             logger.error(f"切换语种失败: {e}")
             yield event.plain_result(f"❌ 切换失败: {e}")
 
-    @filter.command("vocab_help")
+    @filter.command("vocab_help", alias=["单词帮助"])
     async def cmd_help(self, event: AstrMessageEvent):
         """显示帮助信息"""
         help_msg = """📚 每日单词卡片插件帮助
