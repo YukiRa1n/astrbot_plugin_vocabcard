@@ -70,7 +70,9 @@ async def main():
     # 生成图片
     image_renderer = get_image_renderer()
     output_path = str(project_dir / "test_japanese.png")
-    await image_renderer.render_to_file(html, output_path, width=432, height=540, scale=2)
+    await image_renderer.render_to_file(
+        html, output_path, width=432, height=540, scale=2
+    )
 
     print(f"日语卡片已生成: {output_path}")
 

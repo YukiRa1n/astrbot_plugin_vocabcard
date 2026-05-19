@@ -8,6 +8,7 @@ from typing import Dict
 
 try:
     from jinja2 import Environment, FileSystemLoader, select_autoescape
+
     JINJA2_AVAILABLE = True
 except ImportError:
     JINJA2_AVAILABLE = False
@@ -34,7 +35,7 @@ class CardRenderer:
         if self.use_jinja2:
             self.env = Environment(
                 loader=FileSystemLoader(str(templates_dir)),
-                autoescape=select_autoescape(['html', 'xml'])
+                autoescape=select_autoescape(["html", "xml"]),
             )
             self._register_filters()
 
@@ -66,7 +67,7 @@ class CardRenderer:
         if not template_path.exists():
             raise FileNotFoundError(f"模板文件不存在: {template_path}")
 
-        with open(template_path, 'r', encoding='utf-8') as f:
+        with open(template_path, "r", encoding="utf-8") as f:
             template = f.read()
 
         # 简单的占位符替换
@@ -82,6 +83,6 @@ class CardRenderer:
         if not self.use_jinja2:
             return
 
-        self.env.filters['upper'] = lambda x: x.upper() if x else ""
-        self.env.filters['truncate'] = lambda x, n: x[:n] + "..." if len(x) > n else x
-        self.env.filters['default'] = lambda x, d: x if x else d
+        self.env.filters["upper"] = lambda x: x.upper() if x else ""
+        self.env.filters["truncate"] = lambda x, n: x[:n] + "..." if len(x) > n else x
+        self.env.filters["default"] = lambda x, d: x if x else d

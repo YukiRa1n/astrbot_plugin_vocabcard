@@ -9,6 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+
 def main():
     script_dir = Path(__file__).parent
     plugin_dir = script_dir.parent
@@ -45,10 +46,13 @@ def main():
         try:
             cmd = [
                 "gallery-dl",
-                "--dest", str(backgrounds_dir),
-                "--range", f"1-{images_per_category}",
-                "--filename", "{category}_{id}.{extension}",
-                url
+                "--dest",
+                str(backgrounds_dir),
+                "--range",
+                f"1-{images_per_category}",
+                "--filename",
+                "{category}_{id}.{extension}",
+                url,
             ]
             subprocess.run(cmd, check=True)
         except subprocess.CalledProcessError as e:

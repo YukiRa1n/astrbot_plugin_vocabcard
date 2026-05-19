@@ -14,7 +14,7 @@ project_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(project_dir))
 
 from dataclasses import dataclass, field
-from typing import Optional, Dict, List
+from typing import Optional, Dict
 
 
 @dataclass
@@ -59,14 +59,17 @@ class CardRenderer:
 
         # 处理简单的 {% if %} 条件
         import re
+
         # 移除 {% if xxx %} ... {% endif %} 中内容为空的块
-        pattern = r'\{% if (\w+) %\}(.*?)\{% endif %\}'
+        pattern = r"\{% if (\w+) %\}(.*?)\{% endif %\}"
+
         def replace_if(match):
             var_name = match.group(1)
             content = match.group(2)
             if variables.get(var_name):
                 return content
             return ""
+
         html = re.sub(pattern, replace_if, html, flags=re.DOTALL)
 
         return html
@@ -189,8 +192,10 @@ def render_gre_card(word, config, renderer):
         "root": word.extra_fields.get("root", ""),
         "cognates": cognates,
         "bg_url": random.choice(CDN_BACKGROUNDS),
-        "theme_color": random.choice(config.theme_colors) if config.theme_colors else "#1a1a2e",
-        "bg_position": f"{random.randint(0,100)}% {random.randint(0,100)}%",
+        "theme_color": random.choice(config.theme_colors)
+        if config.theme_colors
+        else "#1a1a2e",
+        "bg_position": f"{random.randint(0, 100)}% {random.randint(0, 100)}%",
         "font_word": config.fonts.get("word", "serif"),
         "font_phonetic": config.fonts.get("phonetic", "monospace"),
         "font_definition": config.fonts.get("definition", "sans-serif"),
@@ -212,8 +217,10 @@ def render_idiom_card(word, config, renderer):
         "word": word.word,
         "definition": word.definition,
         "bg_url": random.choice(CDN_BACKGROUNDS),
-        "theme_color": random.choice(config.theme_colors) if config.theme_colors else "#8B0000",
-        "bg_position": f"{random.randint(0,100)}% {random.randint(0,100)}%",
+        "theme_color": random.choice(config.theme_colors)
+        if config.theme_colors
+        else "#8B0000",
+        "bg_position": f"{random.randint(0, 100)}% {random.randint(0, 100)}%",
         "font_word": config.fonts.get("word", "serif"),
         "font_definition": config.fonts.get("definition", "sans-serif"),
         "word_size": config.styles.get("word_size", "56px"),
@@ -231,8 +238,10 @@ def render_classical_card(word, config, renderer):
         "sentence_num": word.extra_fields.get("sentence_num", ""),
         "content": word.definition,
         "bg_url": random.choice(CDN_BACKGROUNDS),
-        "theme_color": random.choice(config.theme_colors) if config.theme_colors else "#2F4F4F",
-        "bg_position": f"{random.randint(0,100)}% {random.randint(0,100)}%",
+        "theme_color": random.choice(config.theme_colors)
+        if config.theme_colors
+        else "#2F4F4F",
+        "bg_position": f"{random.randint(0, 100)}% {random.randint(0, 100)}%",
         "font_word": config.fonts.get("word", "serif"),
         "font_content": config.fonts.get("content", "serif"),
         "keyword_size": config.styles.get("keyword_size", "42px"),
@@ -250,8 +259,10 @@ def render_radio_card(word, config, renderer):
         "question": word.example,
         "answer": word.definition,
         "bg_url": random.choice(CDN_BACKGROUNDS),
-        "theme_color": random.choice(config.theme_colors) if config.theme_colors else "#0f3460",
-        "bg_position": f"{random.randint(0,100)}% {random.randint(0,100)}%",
+        "theme_color": random.choice(config.theme_colors)
+        if config.theme_colors
+        else "#0f3460",
+        "bg_position": f"{random.randint(0, 100)}% {random.randint(0, 100)}%",
         "font_question": config.fonts.get("question", "sans-serif"),
         "font_answer": config.fonts.get("answer", "sans-serif"),
         "question_size": config.styles.get("question_size", "16px"),
@@ -273,8 +284,10 @@ def render_japanese_n1_card(word, config, renderer):
         "example": word.example or "",
         "level": word.extra_fields.get("level", "N1"),
         "bg_url": random.choice(CDN_BACKGROUNDS),
-        "theme_color": random.choice(config.theme_colors) if config.theme_colors else "#533483",
-        "bg_position": f"{random.randint(0,100)}% {random.randint(0,100)}%",
+        "theme_color": random.choice(config.theme_colors)
+        if config.theme_colors
+        else "#533483",
+        "bg_position": f"{random.randint(0, 100)}% {random.randint(0, 100)}%",
         "font_word": config.fonts.get("word", "sans-serif"),
         "font_reading": config.fonts.get("reading", "sans-serif"),
         "font_definition": config.fonts.get("definition", "sans-serif"),
@@ -358,7 +371,11 @@ async def main():
 
         # 随机选一个词
         word = random.choice(words)
-        print(f"  测试词: {word.word[:30]}..." if len(word.word) > 30 else f"  测试词: {word.word}")
+        print(
+            f"  测试词: {word.word[:30]}..."
+            if len(word.word) > 30
+            else f"  测试词: {word.word}"
+        )
 
         # 渲染 HTML
         html = render_func(word, config, renderer)

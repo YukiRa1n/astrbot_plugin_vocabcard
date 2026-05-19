@@ -4,11 +4,10 @@
 """
 
 import random
-from typing import List, Dict
+from typing import List
 from pathlib import Path
 
 from ...core.base_handler import BaseLanguageHandler, WordEntry
-from ...core.language_config import LanguageConfig
 
 
 class EnglishLanguageHandler(BaseLanguageHandler):
@@ -40,7 +39,7 @@ class EnglishLanguageHandler(BaseLanguageHandler):
                 pos=item.get("pos", ""),
                 definition=item.get("definition_cn", ""),
                 example=item.get("example", ""),
-                extra_fields={}
+                extra_fields={},
             )
 
             if word_entry.validate():
@@ -71,30 +70,28 @@ class EnglishLanguageHandler(BaseLanguageHandler):
             "pos": (word.pos or "WORD").upper(),
             "definition_cn": word.definition,
             "example": word.example or "",
-
             # 背景和主题
             "bg_url": kwargs.get("bg_url", ""),
             "theme_color": kwargs.get("theme_color", "#2F4F4F"),
             "bg_position": kwargs.get("bg_position", "50% 50%"),
-
             # 字体配置
             "font_word": self.config.fonts.get("word", "serif"),
             "font_phonetic": self.config.fonts.get("phonetic", "monospace"),
             "font_definition": self.config.fonts.get("definition", "sans-serif"),
             "font_example": self.config.fonts.get("example", "serif"),
-
             # 样式配置
             "word_size": self.config.styles.get("word_size", "52px"),
-            "word_letter_spacing": self.config.styles.get("word_letter_spacing", "-1px"),
+            "word_letter_spacing": self.config.styles.get(
+                "word_letter_spacing", "-1px"
+            ),
             "phonetic_size": self.config.styles.get("phonetic_size", "15px"),
             "definition_size": self.config.styles.get("definition_size", "18px"),
             "example_size": self.config.styles.get("example_size", "14px"),
             "example_style": self.config.styles.get("example_style", "italic"),
-
             # 标签
             "tag1": "#CET6",
             "tag2": "#Daily",
-            "brand": "Daily Vocab"
+            "brand": "Daily Vocab",
         }
 
         # 渲染模板

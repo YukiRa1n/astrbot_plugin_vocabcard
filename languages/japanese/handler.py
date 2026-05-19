@@ -4,11 +4,10 @@
 """
 
 import random
-from typing import List, Dict
+from typing import List
 from pathlib import Path
 
 from ...core.base_handler import BaseLanguageHandler, WordEntry
-from ...core.language_config import LanguageConfig
 
 
 class JapaneseLanguageHandler(BaseLanguageHandler):
@@ -38,7 +37,11 @@ class JapaneseLanguageHandler(BaseLanguageHandler):
             WordEntry 列表
         """
         # 优先使用传入参数，否则使用配置中的默认值
-        filter_level = level_filter if level_filter is not None else getattr(self.config, 'level_filter', 'all')
+        filter_level = (
+            level_filter
+            if level_filter is not None
+            else getattr(self.config, "level_filter", "all")
+        )
 
         raw_data = self.loader.load_json()
 
@@ -48,7 +51,10 @@ class JapaneseLanguageHandler(BaseLanguageHandler):
             item_level = item.get("level", "")  # 格式: JLPT-N4
             if filter_level != "all":
                 # 检查是否匹配指定等级
-                if f"JLPT-{filter_level}" not in item_level and filter_level not in item_level:
+                if (
+                    f"JLPT-{filter_level}" not in item_level
+                    and filter_level not in item_level
+                ):
                     continue
 
             word_entry = WordEntry(
@@ -60,8 +66,8 @@ class JapaneseLanguageHandler(BaseLanguageHandler):
                 extra_fields={
                     "accent": item.get("accent", ""),  # 重音标记
                     "example_cn": item.get("example_cn", ""),  # 中文例句翻译
-                    "level": item_level  # JLPT等级
-                }
+                    "level": item_level,  # JLPT等级
+                },
             )
 
             if word_entry.validate():
@@ -99,30 +105,28 @@ class JapaneseLanguageHandler(BaseLanguageHandler):
             "definition_cn": word.definition,
             "example_ja": word.example or "",  # 日语例句
             "example_cn": example_cn,  # 中文例句翻译
-
             # 背景和主题
             "bg_url": kwargs.get("bg_url", ""),
             "theme_color": kwargs.get("theme_color", "#8B4513"),
             "bg_position": kwargs.get("bg_position", "50% 50%"),
-
             # 字体配置
             "font_word": self.config.fonts.get("word", "serif"),
             "font_phonetic": self.config.fonts.get("phonetic", "sans-serif"),
             "font_definition": self.config.fonts.get("definition", "sans-serif"),
             "font_example": self.config.fonts.get("example", "serif"),
-
             # 样式配置
             "word_size": self.config.styles.get("word_size", "48px"),
-            "word_letter_spacing": self.config.styles.get("word_letter_spacing", "0.05em"),
+            "word_letter_spacing": self.config.styles.get(
+                "word_letter_spacing", "0.05em"
+            ),
             "phonetic_size": self.config.styles.get("phonetic_size", "16px"),
             "definition_size": self.config.styles.get("definition_size", "18px"),
             "example_size": self.config.styles.get("example_size", "14px"),
             "example_style": self.config.styles.get("example_style", "normal"),
-
             # 标签
             "tag1": f"#{level}",  # JLPT等级
             "tag2": "#Daily",
-            "brand": "毎日単語"  # 日语品牌名
+            "brand": "毎日単語",  # 日语品牌名
         }
 
         # 渲染模板

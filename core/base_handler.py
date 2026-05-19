@@ -40,12 +40,12 @@ class WordEntry:
     def to_dict(self) -> Dict:
         """转换为字典"""
         return {
-            'word': self.word,
-            'phonetic': self.phonetic,
-            'pos': self.pos,
-            'definition': self.definition,
-            'example': self.example,
-            **self.extra_fields
+            "word": self.word,
+            "phonetic": self.phonetic,
+            "pos": self.pos,
+            "definition": self.definition,
+            "example": self.example,
+            **self.extra_fields,
         }
 
 
@@ -73,7 +73,7 @@ class BaseLanguageHandler(ABC):
         self.words: List[WordEntry] = []
 
         # 初始化加载器（支持共享词库路径）
-        shared_path = getattr(config, 'shared_words_path', None)
+        shared_path = getattr(config, "shared_words_path", None)
         self.loader = WordLoader(lang_dir / "words.json", shared_path)
         # 使用根目录下的 templates
         self.renderer = CardRenderer(lang_dir.parent.parent / "templates")
@@ -131,8 +131,19 @@ class BaseLanguageHandler(ABC):
         Returns:
             主题色列表
         """
-        return self.config.theme_colors if self.config.theme_colors else [
-            "#2F4F4F", "#4B0082", "#006400", "#8B0000",
-            "#2F2F4F", "#4A4A6A", "#1a1a2e", "#16213e",
-            "#0f3460", "#533483"
-        ]
+        return (
+            self.config.theme_colors
+            if self.config.theme_colors
+            else [
+                "#2F4F4F",
+                "#4B0082",
+                "#006400",
+                "#8B0000",
+                "#2F2F4F",
+                "#4A4A6A",
+                "#1a1a2e",
+                "#16213e",
+                "#0f3460",
+                "#533483",
+            ]
+        )

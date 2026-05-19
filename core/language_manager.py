@@ -93,10 +93,9 @@ class LanguageManager:
         languages = []
         for lang_id in self._handler_classes.keys():
             config = self._configs.get(lang_id)
-            languages.append({
-                'id': lang_id,
-                'name': config.lang_name if config else lang_id
-            })
+            languages.append(
+                {"id": lang_id, "name": config.lang_name if config else lang_id}
+            )
         return languages
 
     def is_registered(self, lang_id: str) -> bool:

@@ -34,7 +34,7 @@ class LanguageConfig:
     shared_words_path: Optional[str] = None  # 共享词库文件路径（相对于 languages 目录）
 
     @classmethod
-    def from_json(cls, config_path: Path) -> 'LanguageConfig':
+    def from_json(cls, config_path: Path) -> "LanguageConfig":
         """
         从 JSON 文件加载配置
 
@@ -47,31 +47,31 @@ class LanguageConfig:
         if not config_path.exists():
             raise FileNotFoundError(f"配置文件不存在: {config_path}")
 
-        with open(config_path, 'r', encoding='utf-8') as f:
+        with open(config_path, "r", encoding="utf-8") as f:
             data = json.load(f)
 
         # 处理默认值
-        if 'card_size' in data and isinstance(data['card_size'], list):
-            data['card_size'] = tuple(data['card_size'])
+        if "card_size" in data and isinstance(data["card_size"], list):
+            data["card_size"] = tuple(data["card_size"])
 
-        if 'theme_colors' not in data:
-            data['theme_colors'] = []
+        if "theme_colors" not in data:
+            data["theme_colors"] = []
 
-        if 'level_filter' not in data:
-            data['level_filter'] = "all"
+        if "level_filter" not in data:
+            data["level_filter"] = "all"
 
-        if 'shared_words_path' not in data:
-            data['shared_words_path'] = None
+        if "shared_words_path" not in data:
+            data["shared_words_path"] = None
 
         return cls(**data)
 
     def to_dict(self) -> Dict:
         """转换为字典"""
         return {
-            'lang_id': self.lang_id,
-            'lang_name': self.lang_name,
-            'fonts': self.fonts,
-            'styles': self.styles,
-            'card_size': list(self.card_size),
-            'theme_colors': self.theme_colors
+            "lang_id": self.lang_id,
+            "lang_name": self.lang_name,
+            "fonts": self.fonts,
+            "styles": self.styles,
+            "card_size": list(self.card_size),
+            "theme_colors": self.theme_colors,
         }
