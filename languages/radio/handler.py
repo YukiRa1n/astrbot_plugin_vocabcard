@@ -20,7 +20,7 @@ class RadioLanguageHandler(BaseLanguageHandler):
                 pos="法规",
                 definition=item.get("answer", ""),
                 example=item.get("question", ""),
-                extra_fields={"tags": item.get("tags", "")}
+                extra_fields={"tags": item.get("tags", "")},
             )
 
             if word_entry.example and word_entry.definition:
@@ -45,6 +45,6 @@ class RadioLanguageHandler(BaseLanguageHandler):
             "answer_size": self.config.styles.get("answer_size", "18px"),
             "tag1": "#无线电",
             "tag2": "#法规",
-            "brand": "无线电法规"
+            "brand": "无线电法规",
         }
         return self.renderer.render("card_radio.html", template_vars)

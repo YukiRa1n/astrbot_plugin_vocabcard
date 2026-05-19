@@ -33,12 +33,12 @@ def parse_line(line: str, line_num: int) -> Optional[Dict]:
         return None
 
     # 必须包含 &
-    if '&' not in line:
+    if "&" not in line:
         return None
 
     try:
         # 分割各字段
-        fields = line.split('&')
+        fields = line.split("&")
         if len(fields) < 4:
             return None
 
@@ -52,7 +52,7 @@ def parse_line(line: str, line_num: int) -> Optional[Dict]:
             return None
 
         # 解析音标 - 去掉方括号，添加斜杠
-        phonetic = phonetic_raw.strip('[]')
+        phonetic = phonetic_raw.strip("[]")
         if phonetic:
             phonetic = f"/{phonetic}/"
 
@@ -61,7 +61,7 @@ def parse_line(line: str, line_num: int) -> Optional[Dict]:
         definition_cn = pos_definition
 
         # 尝试提取词性 (如 adj. n. v. 等)
-        pos_match = re.match(r'^([a-z]+\.)\s*(.+)', pos_definition)
+        pos_match = re.match(r"^([a-z]+\.)\s*(.+)", pos_definition)
         if pos_match:
             pos = pos_match.group(1)
             definition_cn = pos_match.group(2)
@@ -72,7 +72,7 @@ def parse_line(line: str, line_num: int) -> Optional[Dict]:
             "pos": pos,
             "definition_cn": definition_cn,
             "example": example,
-            "_seq": line_num  # 用于保持顺序
+            "_seq": line_num,  # 用于保持顺序
         }
 
     except Exception as e:
@@ -85,7 +85,7 @@ def clean_vocabulary_file(input_path: Path) -> List[Dict]:
     words = []
 
     # 尝试多种编码
-    encodings = ['utf-8', 'gbk', 'gb2312', 'utf-16']
+    encodings = ["utf-8", "gbk", "gb2312", "utf-16"]
     content = None
 
     for encoding in encodings:
@@ -114,16 +114,16 @@ def clean_vocabulary_file(input_path: Path) -> List[Dict]:
 def merge_and_deduplicate(all_words: List[Dict]) -> List[Dict]:
     """合并并去重"""
     # 按序号排序
-    all_words.sort(key=lambda x: x.get('_seq', 0))
+    all_words.sort(key=lambda x: x.get("_seq", 0))
 
     # 去重
     seen = set()
     unique_words = []
     for w in all_words:
-        if w['word'].lower() not in seen:
-            seen.add(w['word'].lower())
+        if w["word"].lower() not in seen:
+            seen.add(w["word"].lower())
             # 移除临时字段
-            w.pop('_seq', None)
+            w.pop("_seq", None)
             unique_words.append(w)
 
     return unique_words
@@ -131,17 +131,15 @@ def merge_and_deduplicate(all_words: List[Dict]) -> List[Dict]:
 
 def main():
     import sys
-    sys.stdout.reconfigure(encoding='utf-8')
+
+    sys.stdout.reconfigure(encoding="utf-8")
 
     script_dir = Path(__file__).parent
     plugin_dir = script_dir.parent
     project_dir = plugin_dir.parent
 
     # 输入文件
-    input_files = [
-        project_dir / "六级分类99.txt",
-        project_dir / "99.六级核心.txt"
-    ]
+    input_files = [project_dir / "六级分类99.txt", project_dir / "99.六级核心.txt"]
 
     # 输出目录
     output_dir = plugin_dir / "data"
@@ -169,7 +167,7 @@ def main():
 
         # 保存
         output_path = output_dir / "words.json"
-        with open(output_path, 'w', encoding='utf-8') as f:
+        with open(output_path, "w", encoding="utf-8") as f:
             json.dump(unique_words, f, ensure_ascii=False, indent=2)
 
         print(f"已保存到: {output_path}")

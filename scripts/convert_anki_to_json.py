@@ -8,15 +8,17 @@ import json
 import re
 from pathlib import Path
 
+
 def clean_html(text):
     """移除 HTML 标签"""
     if not text:
         return ""
     # 移除 HTML 标签
-    clean = re.sub(r'<[^>]+>', '', text)
+    clean = re.sub(r"<[^>]+>", "", text)
     # 移除多余空白
-    clean = ' '.join(clean.split())
+    clean = " ".join(clean.split())
     return clean
+
 
 def extract_level_from_tags(tags):
     """从标签中提取 JLPT 等级"""
@@ -24,11 +26,12 @@ def extract_level_from_tags(tags):
         return "JLPT"
 
     # 查找 N1-N5 标签
-    for level in ['N1', 'N2', 'N3', 'N4', 'N5']:
+    for level in ["N1", "N2", "N3", "N4", "N5"]:
         if level in tags:
             return f"JLPT-{level}"
 
     return "JLPT"
+
 
 def convert_anki_to_words(db_path, output_path, limit=None):
     """
@@ -58,7 +61,7 @@ def convert_anki_to_words(db_path, output_path, limit=None):
     skipped = 0
 
     for note_id, flds, tags in notes:
-        fields = flds.split('\x1f')
+        fields = flds.split("\x1f")
 
         # 确保有足够的字段
         if len(fields) < 13:
@@ -91,7 +94,7 @@ def convert_anki_to_words(db_path, output_path, limit=None):
             "definition_cn": definition_cn,
             "example_ja": example_ja if example_ja else "",
             "example_cn": example_cn if example_cn else "",
-            "level": level
+            "level": level,
         }
 
         words_data.append(word_entry)
@@ -99,20 +102,27 @@ def convert_anki_to_words(db_path, output_path, limit=None):
     conn.close()
 
     # 保存为 JSON
-    with open(output_path, 'w', encoding='utf-8') as f:
+    with open(output_path, "w", encoding="utf-8") as f:
         json.dump(words_data, f, ensure_ascii=False, indent=2)
 
-    print(f"转换完成！")
+    print("转换完成！")
     print(f"  - 成功转换: {len(words_data)} 条")
     print(f"  - 跳过: {skipped} 条")
     print(f"  - 输出文件: {output_path}")
 
     return words_data
 
+
 if __name__ == "__main__":
     # 设置路径
     project_dir = Path(__file__).parent.parent
-    db_path = project_dir / "temp_repo" / "anki-jlpt-decks" / "extracted" / "collection.anki21"
+    db_path = (
+        project_dir
+        / "temp_repo"
+        / "anki-jlpt-decks"
+        / "extracted"
+        / "collection.anki21"
+    )
     output_path = project_dir / "data" / "words_ja.json"
 
     print(f"数据库路径: {db_path}")

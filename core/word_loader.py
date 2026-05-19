@@ -46,7 +46,7 @@ class WordLoader:
         if not target_path.exists():
             raise FileNotFoundError(f"词库文件不存在: {target_path}")
 
-        with open(target_path, 'r', encoding='utf-8') as f:
+        with open(target_path, "r", encoding="utf-8") as f:
             data = json.load(f)
 
         # 数据验证
@@ -71,7 +71,7 @@ class WordLoader:
         # 抽样验证前 10 条数据
         # 抽样验证前 10 条数据
         # required_fields = {"word"}  # 移除硬编码字段检查，由 Handler 自行处理
-        for item in data[:min(10, len(data))]:
+        for item in data[: min(10, len(data))]:
             if not isinstance(item, dict):
                 return False
             # if not required_fields.issubset(item.keys()):
@@ -98,7 +98,7 @@ class WordLoader:
                 return shared_path
         return self.data_path
 
-    def load_csv(self, delimiter: str = ',') -> List[Dict]:
+    def load_csv(self, delimiter: str = ",") -> List[Dict]:
         """
         加载 CSV 格式词库（预留接口）
 

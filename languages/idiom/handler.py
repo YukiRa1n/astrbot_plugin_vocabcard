@@ -22,7 +22,7 @@ class IdiomLanguageHandler(BaseLanguageHandler):
                 pos="成语",
                 definition=item.get("definition", ""),
                 example="",
-                extra_fields={}
+                extra_fields={},
             )
 
             if word_entry.validate():
@@ -45,7 +45,7 @@ class IdiomLanguageHandler(BaseLanguageHandler):
             "definition_size": self.config.styles.get("definition_size", "18px"),
             "tag1": "#成语",
             "tag2": "#Daily",
-            "brand": "成语卡片"
+            "brand": "成语卡片",
         }
 
         return self.renderer.render("card_idiom.html", template_vars)

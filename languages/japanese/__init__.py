@@ -5,4 +5,4 @@
 
 from .handler import JapaneseLanguageHandler
 
-__all__ = ['JapaneseLanguageHandler']
+__all__ = ["JapaneseLanguageHandler"]

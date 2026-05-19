@@ -13,14 +13,14 @@ def clean_html(text):
     """移除 HTML 标签和多余空白"""
     if not text:
         return ""
-    clean = re.sub(r'<[^>]+>', '', str(text))
-    clean = ' '.join(clean.split())
+    clean = re.sub(r"<[^>]+>", "", str(text))
+    clean = " ".join(clean.split())
     return clean
 
 
 def load_json_file(file_path):
     """加载 JSON 文件（处理单行 JSON 格式）"""
-    with open(file_path, 'r', encoding='utf-8') as f:
+    with open(file_path, "r", encoding="utf-8") as f:
         content = f.read().strip()
         return json.loads(content)
 
@@ -102,7 +102,7 @@ def convert_gre3000(gre_dir, output_path):
             "mnemo": "\n".join(mnemo_content) if mnemo_content else "",  # 助记内容
             "root": root,
             "root_explanation": root_exp[0] if root_exp else "",
-            "cognates": cognates
+            "cognates": cognates,
         }
 
         # 验证必要字段
@@ -111,10 +111,10 @@ def convert_gre3000(gre_dir, output_path):
 
     # 保存为 JSON
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, 'w', encoding='utf-8') as f:
+    with open(output_path, "w", encoding="utf-8") as f:
         json.dump(words_list, f, ensure_ascii=False, indent=2)
 
-    print(f"\n转换完成！")
+    print("\n转换完成！")
     print(f"  - 成功转换: {len(words_list)} 条")
     print(f"  - 输出文件: {output_path}")
 
@@ -125,8 +125,12 @@ def convert_gre3000(gre_dir, output_path):
         print(f"单词: {sample['word']}")
         print(f"音标: {sample['phonetic']}")
         print(f"释义: {sample['definitions'][0][:80]}...")
-        print(f"助记: {sample['mnemo'][:80]}..." if sample['mnemo'] else "助记: 无")
-        print(f"同根词: {sample['cognates'][:50]}..." if sample['cognates'] else "同根词: 无")
+        print(f"助记: {sample['mnemo'][:80]}..." if sample["mnemo"] else "助记: 无")
+        print(
+            f"同根词: {sample['cognates'][:50]}..."
+            if sample["cognates"]
+            else "同根词: 无"
+        )
 
     return words_list
 

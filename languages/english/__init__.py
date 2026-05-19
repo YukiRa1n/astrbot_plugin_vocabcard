@@ -5,4 +5,4 @@
 
 from .handler import EnglishLanguageHandler
 
-__all__ = ['EnglishLanguageHandler']
+__all__ = ["EnglishLanguageHandler"]

@@ -10,10 +10,10 @@ from .card_renderer import CardRenderer
 from .language_manager import LanguageManager
 
 __all__ = [
-    'LanguageConfig',
-    'BaseLanguageHandler',
-    'WordEntry',
-    'WordLoader',
-    'CardRenderer',
-    'LanguageManager'
+    "LanguageConfig",
+    "BaseLanguageHandler",
+    "WordEntry",
+    "WordLoader",
+    "CardRenderer",
+    "LanguageManager",
 ]

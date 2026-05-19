@@ -5,11 +5,9 @@ AstrBot 每日单词卡片插件
 """
 
 from astrbot.api.event import filter, AstrMessageEvent
-from astrbot.api.event.filter import EventMessageType
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger, AstrBotConfig
 from astrbot.api.event import MessageChain
-import astrbot.api.message_components as Comp
 
 import asyncio
 import datetime
@@ -93,7 +91,9 @@ def get_beijing_time() -> datetime.datetime:
     return datetime.datetime.now(beijing_tz)
 
 
-@register("vocabcard", "Assistant", "每日多语种单词卡片推送插件 - 支持英语/日语", "2.0.0")
+@register(
+    "vocabcard", "Assistant", "每日多语种单词卡片推送插件 - 支持英语/日语", "2.0.0"
+)
 class VocabCardPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -135,7 +135,9 @@ class VocabCardPlugin(Star):
         self.offline_backgrounds: List[Path] = self._load_offline_backgrounds()
 
         # 定时任务相关
-        self._scheduler_task: Optional[asyncio.Task] = asyncio.create_task(self._schedule_loop())
+        self._scheduler_task: Optional[asyncio.Task] = asyncio.create_task(
+            self._schedule_loop()
+        )
         logger.info("单词卡片定时任务已启动")
         self._cached_image_path: Optional[str] = None
         self._current_word: Optional[WordEntry] = None
@@ -209,6 +211,7 @@ class VocabCardPlugin(Star):
                 # 将旧的进度文件重命名为英语进度文件（因为旧版本只支持英语）
                 try:
                     import shutil
+
                     shutil.copy2(old_progress_file, progress_file)
                     logger.info(f"已将旧进度文件迁移到: {progress_file}")
                 except Exception as e:
@@ -217,7 +220,7 @@ class VocabCardPlugin(Star):
         # 加载进度文件
         if progress_file.exists():
             try:
-                with open(progress_file, 'r', encoding='utf-8') as f:
+                with open(progress_file, "r", encoding="utf-8") as f:
                     return json.load(f)
             except Exception as e:
                 logger.error(f"加载进度数据失败: {e}")
@@ -229,7 +232,7 @@ class VocabCardPlugin(Star):
         async with self._progress_lock:
             progress_file = self.data_dir / f"progress_{self.current_language}.json"
             try:
-                with open(progress_file, 'w', encoding='utf-8') as f:
+                with open(progress_file, "w", encoding="utf-8") as f:
                     json.dump(self.progress, f, ensure_ascii=False, indent=2)
             except Exception as e:
                 logger.error(f"保存进度数据失败: {e}")
@@ -238,8 +241,8 @@ class VocabCardPlugin(Star):
         """异步初始化"""
         # 确保必要的目录存在
         directories_to_create = [
-            self.data_dir,           # 数据目录
-            self.backgrounds_dir,    # 背景图片目录
+            self.data_dir,  # 数据目录
+            self.backgrounds_dir,  # 背景图片目录
         ]
 
         for directory in directories_to_create:
@@ -252,13 +255,15 @@ class VocabCardPlugin(Star):
             default_progress = {"sent_words": [], "last_push_date": ""}
             async with self._progress_lock:
                 try:
-                    with open(progress_file, 'w', encoding='utf-8') as f:
+                    with open(progress_file, "w", encoding="utf-8") as f:
                         json.dump(default_progress, f, ensure_ascii=False, indent=2)
                     logger.info(f"已创建进度文件: {progress_file}")
                 except Exception as e:
                     logger.error(f"创建进度文件失败: {e}")
 
-        logger.info(f"单词卡片插件初始化完成 [语种: {self.current_language}]，已加载 {len(self.words)} 个单词")
+        logger.info(
+            f"单词卡片插件初始化完成 [语种: {self.current_language}]，已加载 {len(self.words)} 个单词"
+        )
 
     async def _schedule_loop(self):
         """定时任务主循环 - 智能睡眠，精准触发"""
@@ -268,7 +273,9 @@ class VocabCardPlugin(Star):
                 today_str = now.strftime("%Y-%m-%d")
 
                 # 解析配置的时间
-                gen_time = self._parse_time(self.config.get("push_time_generate", "07:30"))
+                gen_time = self._parse_time(
+                    self.config.get("push_time_generate", "07:30")
+                )
                 push_time = self._parse_time(self.config.get("push_time_send", "08:00"))
 
                 # 每天0点重置标记
@@ -285,7 +292,9 @@ class VocabCardPlugin(Star):
                     # 如果距离目标时间超过 60 秒，先睡到提前 30 秒
                     if sleep_seconds > 60:
                         sleep_until = sleep_seconds - 30
-                        logger.debug(f"距离下次任务还有 {sleep_seconds:.0f} 秒，先睡眠 {sleep_until:.0f} 秒")
+                        logger.debug(
+                            f"距离下次任务还有 {sleep_seconds:.0f} 秒，先睡眠 {sleep_until:.0f} 秒"
+                        )
                         await asyncio.sleep(sleep_until)
                         continue
 
@@ -306,7 +315,9 @@ class VocabCardPlugin(Star):
 
                 # 执行推送任务
                 if now.hour == push_time[0] and now.minute == push_time[1]:
-                    if self._cached_image_path and os.path.exists(self._cached_image_path):
+                    if self._cached_image_path and os.path.exists(
+                        self._cached_image_path
+                    ):
                         logger.info("开始推送每日单词卡片...")
                         await self._push_daily_card()
 
@@ -320,21 +331,27 @@ class VocabCardPlugin(Star):
     def _parse_time(self, time_str: str) -> tuple:
         """解析时间字符串 HH:MM"""
         try:
-            parts = time_str.split(':')
+            parts = time_str.split(":")
             return (int(parts[0]), int(parts[1]))
         except (ValueError, IndexError) as e:
             logger.warning(f"时间格式解析失败 '{time_str}': {e}，使用默认值 08:00")
             return (8, 0)  # 默认 8:00
 
-    def _calculate_next_target_time(self, now: datetime.datetime, gen_time: tuple, push_time: tuple) -> Optional[datetime.datetime]:
+    def _calculate_next_target_time(
+        self, now: datetime.datetime, gen_time: tuple, push_time: tuple
+    ) -> Optional[datetime.datetime]:
         """计算下一个目标时间点（生成时间或推送时间中最近的一个）"""
         today = now.date()
         # 获取时区信息（与 now 保持一致）
         tz = now.tzinfo
 
         # 构建今天的生成时间和推送时间（带时区）
-        gen_datetime = datetime.datetime.combine(today, datetime.time(gen_time[0], gen_time[1]), tzinfo=tz)
-        push_datetime = datetime.datetime.combine(today, datetime.time(push_time[0], push_time[1]), tzinfo=tz)
+        gen_datetime = datetime.datetime.combine(
+            today, datetime.time(gen_time[0], gen_time[1]), tzinfo=tz
+        )
+        push_datetime = datetime.datetime.combine(
+            today, datetime.time(push_time[0], push_time[1]), tzinfo=tz
+        )
 
         # 找出所有未来的目标时间
         targets = []
@@ -350,7 +367,9 @@ class VocabCardPlugin(Star):
         # 如果今天的任务都完成了，计算明天的第一个任务（生成时间）
         if not targets:
             tomorrow = today + datetime.timedelta(days=1)
-            next_gen = datetime.datetime.combine(tomorrow, datetime.time(gen_time[0], gen_time[1]), tzinfo=tz)
+            next_gen = datetime.datetime.combine(
+                tomorrow, datetime.time(gen_time[0], gen_time[1]), tzinfo=tz
+            )
             targets.append(next_gen)
 
         # 返回最近的目标时间
@@ -392,7 +411,7 @@ class VocabCardPlugin(Star):
     def _generate_bg_prompt(self, word: WordEntry) -> str:
         """根据单词生成背景图提示词"""
         word_text = word.word
-        meaning = word.definition
+        # meaning = word.definition  # noqa: F841
         pos = (word.pos or "").lower()
 
         # 基于词性选择主题风格
@@ -416,7 +435,9 @@ class VocabCardPlugin(Star):
 
         # 从当前语种配置中选择主题色
         theme_colors = self.current_handler.config.theme_colors
-        theme_color = random.choice(theme_colors) if theme_colors else random.choice(THEME_COLORS)
+        theme_color = (
+            random.choice(theme_colors) if theme_colors else random.choice(THEME_COLORS)
+        )
 
         # 随机背景图位置
         bg_x = random.randint(0, 100)
@@ -425,10 +446,7 @@ class VocabCardPlugin(Star):
 
         # 使用 Handler 渲染卡片
         return self.current_handler.render_card(
-            word,
-            bg_url=bg_url,
-            theme_color=theme_color,
-            bg_position=bg_position
+            word, bg_url=bg_url, theme_color=theme_color, bg_position=bg_position
         )
 
     async def _generate_card_image(self, word: WordEntry) -> str:
@@ -449,12 +467,12 @@ class VocabCardPlugin(Star):
                 output_path=str(output_png),
                 width=432,
                 height=540,
-                scale=4  # 4K 清晰度
+                scale=4,  # 4K 清晰度
             )
-            
+
             logger.info(f"卡片图片已生成: {output_png}")
             return str(output_png)
-            
+
         except Exception as e:
             logger.error(f"生成卡片图片失败: {e}")
             raise
@@ -643,17 +661,21 @@ class VocabCardPlugin(Star):
                 now = get_beijing_time()
                 target_time = now + datetime.timedelta(seconds=delay)
                 yield event.plain_result(f"⏰ 将在 {delay} 秒后执行推送")
-                yield event.plain_result(f"📅 目标时间: {target_time.strftime('%H:%M:%S')}")
+                yield event.plain_result(
+                    f"📅 目标时间: {target_time.strftime('%H:%M:%S')}"
+                )
 
                 await asyncio.sleep(delay)
-                yield event.plain_result(f"⏱️ 时间到！开始执行...")
+                yield event.plain_result("⏱️ 时间到！开始执行...")
 
                 # 步骤 1: 生成
                 yield event.plain_result("🎨 步骤 1/2: 生成单词卡片...")
                 try:
                     await self._generate_daily_card()
                     if self._cached_image_path:
-                        word_text = self._current_word.word if self._current_word else '?'
+                        word_text = (
+                            self._current_word.word if self._current_word else "?"
+                        )
                         yield event.plain_result(f"✅ 卡片生成成功: {word_text}")
                     else:
                         yield event.plain_result("❌ 卡片生成失败：缓存路径为空")
@@ -661,7 +683,9 @@ class VocabCardPlugin(Star):
                 except Exception as e:
                     error_detail = traceback.format_exc()
                     logger.error(f"生成失败:\n{error_detail}")
-                    yield event.plain_result(f"❌ 生成失败: {e}\n\n详细:\n{error_detail[:500]}")
+                    yield event.plain_result(
+                        f"❌ 生成失败: {e}\n\n详细:\n{error_detail[:500]}"
+                    )
                     return
 
                 # 步骤 2: 推送
@@ -675,7 +699,9 @@ class VocabCardPlugin(Star):
                 except Exception as e:
                     error_detail = traceback.format_exc()
                     logger.error(f"推送失败:\n{error_detail}")
-                    yield event.plain_result(f"❌ 推送失败: {e}\n\n详细:\n{error_detail[:500]}")
+                    yield event.plain_result(
+                        f"❌ 推送失败: {e}\n\n详细:\n{error_detail[:500]}"
+                    )
 
             finally:
                 # 恢复配置
@@ -713,8 +739,8 @@ class VocabCardPlugin(Star):
         info_msg = f"""🔍 单词预览
 ━━━━━━━━━━━━━━━━━━━━
 📝 单词: {word.word}
-🔊 音标: {word.phonetic or ''}
-📚 词性: {word.pos or ''}
+🔊 音标: {word.phonetic or ""}
+📚 词性: {word.pos or ""}
 📖 释义: {word.definition}
 💬 例句: {example_preview}...
 ━━━━━━━━━━━━━━━━━━━━
@@ -735,9 +761,12 @@ class VocabCardPlugin(Star):
 
         except Exception as e:
             import traceback
+
             error_detail = traceback.format_exc()
             logger.error(f"预览失败: {error_detail}")
-            yield event.plain_result(f"❌ 生成失败: {e}\n\n详细错误:\n{error_detail[:500]}")
+            yield event.plain_result(
+                f"❌ 生成失败: {e}\n\n详细错误:\n{error_detail[:500]}"
+            )
 
     @filter.command("vocab_now")
     async def cmd_push_now(self, event: AstrMessageEvent):
@@ -747,7 +776,9 @@ class VocabCardPlugin(Star):
         # 检查是否有注册的群
         target_groups = self.config.get("target_groups", [])
         if not target_groups:
-            yield event.plain_result("⚠️ 没有已注册的推送目标，请先使用 /vocab_register 注册")
+            yield event.plain_result(
+                "⚠️ 没有已注册的推送目标，请先使用 /vocab_register 注册"
+            )
             return
 
         yield event.plain_result(f"📋 已注册 {len(target_groups)} 个推送目标")
@@ -761,7 +792,9 @@ class VocabCardPlugin(Star):
                 yield event.plain_result("❌ 卡片生成失败")
                 return
 
-            yield event.plain_result(f"✅ 卡片已生成: {self._current_word.word if self._current_word else '?'}")
+            yield event.plain_result(
+                f"✅ 卡片已生成: {self._current_word.word if self._current_word else '?'}"
+            )
 
             # 2. 推送
             yield event.plain_result("⏳ 步骤2: 推送到所有已注册群聊...")
@@ -771,6 +804,7 @@ class VocabCardPlugin(Star):
 
         except Exception as e:
             import traceback
+
             logger.error(f"立即推送失败: {traceback.format_exc()}")
             yield event.plain_result(f"❌ 推送失败: {e}")
 
@@ -793,7 +827,7 @@ class VocabCardPlugin(Star):
 可用语种:
 """
             for lang in available:
-                marker = "✅" if lang['id'] == current else "  "
+                marker = "✅" if lang["id"] == current else "  "
                 msg += f"{marker} {lang['id']} - {lang['name']}\n"
 
             msg += "━━━━━━━━━━━━━━━━\n"
@@ -805,7 +839,9 @@ class VocabCardPlugin(Star):
         try:
             # 检查语种是否已注册
             if not self.lang_manager.is_registered(lang_id):
-                yield event.plain_result(f"❌ 语种 '{lang_id}' 未注册\n请使用 /vocab_lang 查看可用语种")
+                yield event.plain_result(
+                    f"❌ 语种 '{lang_id}' 未注册\n请使用 /vocab_lang 查看可用语种"
+                )
                 return
 
             # 获取新的 Handler
@@ -823,7 +859,9 @@ class VocabCardPlugin(Star):
             self.config["current_language"] = lang_id
             self.config.save_config()
 
-            yield event.plain_result(f"✅ 已切换到语种: {lang_id}\n📚 已加载 {len(self.words)} 个单词")
+            yield event.plain_result(
+                f"✅ 已切换到语种: {lang_id}\n📚 已加载 {len(self.words)} 个单词"
+            )
 
         except Exception as e:
             logger.error(f"切换语种失败: {e}")

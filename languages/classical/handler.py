@@ -20,7 +20,7 @@ class ClassicalLanguageHandler(BaseLanguageHandler):
                 pos="古文",
                 definition=item.get("content", ""),
                 example="",
-                extra_fields={"sentence_num": item.get("sentence_num", "")}
+                extra_fields={"sentence_num": item.get("sentence_num", "")},
             )
 
             if word_entry.word and word_entry.definition:
@@ -44,6 +44,6 @@ class ClassicalLanguageHandler(BaseLanguageHandler):
             "content_size": self.config.styles.get("content_size", "16px"),
             "tag1": "#古文",
             "tag2": "#Daily",
-            "brand": "古文卡片"
+            "brand": "古文卡片",
         }
         return self.renderer.render("card_classical.html", template_vars)
