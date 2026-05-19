@@ -411,7 +411,7 @@ class VocabCardPlugin(Star):
     def _generate_bg_prompt(self, word: WordEntry) -> str:
         """根据单词生成背景图提示词"""
         word_text = word.word
-        meaning = word.definition
+        # meaning = word.definition  # noqa: F841
         pos = (word.pos or "").lower()
 
         # 基于词性选择主题风格

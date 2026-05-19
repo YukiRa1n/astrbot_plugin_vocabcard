@@ -206,48 +206,56 @@ class ImageRenderer:
         """
         将 HTML 渲染为 PNG 图片文件 (基于 Page 复用池)
         """
+        import os
+        import uuid
+
         page = None
-        # 写入临时 HTML 文件
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".html", delete=True, encoding="utf-8"
-        ) as f:
+
+        # 写入临时 HTML 文件 (避免 Windows NamedTemporaryFile 独占文件锁)
+        temp_dir = tempfile.gettempdir()
+        temp_html_path = os.path.join(temp_dir, f"vocab_{uuid.uuid4().hex}.html")
+        with open(temp_html_path, "w", encoding="utf-8") as f:
             f.write(html_content)
-            f.flush()
-            temp_html_path = f.name
 
+        try:
+            page = await self._acquire_page(width, height, scale)
+
+            # 超时限制保护渲染 (15 秒超时)
+            await asyncio.wait_for(
+                page.goto(Path(temp_html_path).as_uri()), timeout=15.0
+            )
+
+            # 等待背景图等静止加载
             try:
-                page = await self._acquire_page(width, height, scale)
-
-                # 超时限制保护渲染 (15 秒超时)
-                await asyncio.wait_for(
-                    page.goto(Path(temp_html_path).as_uri()), timeout=15.0
-                )
-
-                # 等待背景图等静止加载
-                try:
-                    await page.wait_for_load_state("networkidle", timeout=8000)
-                except Exception as e:
-                    logger.debug(f"背景图加载网络空闲等待超时: {e}")
-
-                await page.wait_for_timeout(1000)
-
-                # 截图保存
-                await page.screenshot(path=output_path, type="png", scale="device")
-                logger.info(f"卡片图片已生成: {output_path}")
-
-                await self._release_page(page)
-                return output_path
+                await page.wait_for_load_state("networkidle", timeout=8000)
             except Exception as e:
-                logger.error(f"渲染图片到文件失败: {e}")
-                # 异常发生时直接销毁该 page
-                if page is not None:
-                    async with self._lock:
-                        self._active_pages_count = max(0, self._active_pages_count - 1)
-                    try:
-                        await page.close()
-                    except Exception:
-                        pass
-                raise
+                logger.debug(f"背景图加载网络空闲等待超时: {e}")
+
+            await page.wait_for_timeout(150)
+
+            # 截图保存
+            await page.screenshot(path=output_path, type="png", scale="device")
+            logger.info(f"卡片图片已生成: {output_path}")
+
+            await self._release_page(page)
+            return output_path
+        except Exception as e:
+            logger.error(f"渲染图片到文件失败: {e}")
+            # 异常发生时直接销毁该 page
+            if page is not None:
+                async with self._lock:
+                    self._active_pages_count = max(0, self._active_pages_count - 1)
+                try:
+                    await page.close()
+                except Exception:
+                    pass
+            raise
+        finally:
+            try:
+                if os.path.exists(temp_html_path):
+                    os.remove(temp_html_path)
+            except Exception:
+                pass
 
     async def render_to_bytes(
         self, html_content: str, width: int = 432, height: int = 540, scale: int = 4
@@ -255,45 +263,53 @@ class ImageRenderer:
         """
         将 HTML 渲染为 PNG 图片字节 (基于 Page 复用池)
         """
+        import os
+        import uuid
+
         page = None
-        # 写入临时 HTML 文件
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".html", delete=True, encoding="utf-8"
-        ) as f:
+
+        # 写入临时 HTML 文件 (避免 Windows NamedTemporaryFile 独占文件锁)
+        temp_dir = tempfile.gettempdir()
+        temp_html_path = os.path.join(temp_dir, f"vocab_{uuid.uuid4().hex}.html")
+        with open(temp_html_path, "w", encoding="utf-8") as f:
             f.write(html_content)
-            f.flush()
-            temp_html_path = f.name
+
+        try:
+            page = await self._acquire_page(width, height, scale)
+
+            # 超时限制保护
+            await asyncio.wait_for(
+                page.goto(Path(temp_html_path).as_uri()), timeout=15.0
+            )
 
             try:
-                page = await self._acquire_page(width, height, scale)
-
-                # 超时限制保护
-                await asyncio.wait_for(
-                    page.goto(Path(temp_html_path).as_uri()), timeout=15.0
-                )
-
-                try:
-                    await page.wait_for_load_state("networkidle", timeout=8000)
-                except Exception as e:
-                    logger.debug(f"渲染时等待网络空闲超时: {e}")
-
-                await page.wait_for_timeout(1000)
-
-                # 截图字节
-                image_bytes = await page.screenshot(type="png", scale="device")
-
-                await self._release_page(page)
-                return image_bytes
+                await page.wait_for_load_state("networkidle", timeout=8000)
             except Exception as e:
-                logger.error(f"渲染图片为字节失败: {e}")
-                if page is not None:
-                    async with self._lock:
-                        self._active_pages_count = max(0, self._active_pages_count - 1)
-                    try:
-                        await page.close()
-                    except Exception:
-                        pass
-                raise
+                logger.debug(f"渲染时等待网络空闲超时: {e}")
+
+            await page.wait_for_timeout(150)
+
+            # 截图字节
+            image_bytes = await page.screenshot(type="png", scale="device")
+
+            await self._release_page(page)
+            return image_bytes
+        except Exception as e:
+            logger.error(f"渲染图片为字节失败: {e}")
+            if page is not None:
+                async with self._lock:
+                    self._active_pages_count = max(0, self._active_pages_count - 1)
+                try:
+                    await page.close()
+                except Exception:
+                    pass
+            raise
+        finally:
+            try:
+                if os.path.exists(temp_html_path):
+                    os.remove(temp_html_path)
+            except Exception:
+                pass
 
     async def close(self):
         """关闭所有浏览器资源，释放池"""
