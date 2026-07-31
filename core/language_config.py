@@ -6,7 +6,7 @@
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -27,7 +27,7 @@ class LanguageConfig:
     lang_id: str
     lang_name: str
     fonts: Dict[str, str]
-    styles: Dict[str, any]
+    styles: Dict[str, Any]
     card_size: tuple = (432, 540)
     theme_colors: List[str] = field(default_factory=list)
     level_filter: str = "all"  # JLPT 等级过滤器

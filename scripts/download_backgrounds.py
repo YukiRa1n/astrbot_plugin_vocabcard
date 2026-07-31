@@ -13,7 +13,8 @@ from pathlib import Path
 def main():
     script_dir = Path(__file__).parent
     plugin_dir = script_dir.parent
-    backgrounds_dir = plugin_dir / "backgrounds"
+    # 与 main.py 一致：默认 photos/，并兼容旧 backgrounds/
+    backgrounds_dir = plugin_dir / "photos"
     backgrounds_dir.mkdir(parents=True, exist_ok=True)
 
     # Unsplash 集合/搜索 URL 列表

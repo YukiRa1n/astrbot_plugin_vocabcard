@@ -3,20 +3,20 @@
     "description": "当前卡组",
     "type": "string",
     "options": ["english", "japanese", "japanese_n1", "japanese_n2", "japanese_n3", "japanese_n4", "japanese_n5", "idiom", "classical", "radio"],
-    "hint": "卡组选项: english=英语六级, japanese=日语全部, japanese_n1~n5=日语分级(独立进度), idiom=成语, classical=古文, radio=无线电法规",
+    "hint": "卡组选项: english=英语六级, japanese=日语全部, japanese_n1~n5=日语分级(独立进度), idiom=成语, classical=古文, radio=无线电法规。切换也可用 /vocab_lang（管理员）",
     "default": "english"
   },
   "japanese_level": {
     "description": "日语JLPT等级筛选",
     "type": "string",
     "options": ["all", "N1", "N2", "N3", "N4", "N5"],
-    "hint": "筛选日语词汇等级: all=全部(约1万词), N1=最难, N5=最简单",
+    "hint": "仅对 japanese 全量卡组生效: all=全部, N1=最难, N5=最简单。分级卡组 japanese_n* 使用各自配置",
     "default": "all"
   },
   "target_groups": {
     "description": "推送目标列表",
     "type": "list",
-    "hint": "存储已注册的 unified_msg_origin，由 /vocab_register 命令自动管理",
+    "hint": "存储已注册的 unified_msg_origin，由管理员 /vocab_register 命令自动管理",
     "default": [],
     "invisible": true
   },
@@ -47,13 +47,13 @@
   "bg_load_timeout": {
     "description": "背景图加载等待时间",
     "type": "int",
-    "hint": "等待 AI 背景图加载的毫秒数，建议 3000-10000",
+    "hint": "等待背景图 networkidle 的毫秒数，建议 3000-10000",
     "default": 5000
   },
   "default_bg_url": {
     "description": "默认背景图URL",
     "type": "string",
-    "hint": "当AI背景关闭时使用的默认背景图片URL",
+    "hint": "CDN 与 AI 均关闭时优先使用的背景图 URL；留空则使用本地 photos/ 或 backgrounds/",
     "default": ""
   },
   "learning_mode": {
@@ -66,7 +66,44 @@
   "reset_on_complete": {
     "description": "学完后自动重置",
     "type": "bool",
-    "hint": "所有单词推送完毕后自动从头开始",
+    "hint": "所有单词推送完毕后自动从头开始；关闭后学完不再推送新词",
     "default": true
+  },
+  "browser_engine": {
+    "description": "浏览器引擎",
+    "type": "string",
+    "options": ["chromium", "firefox", "webkit"],
+    "hint": "Chromium 兼容性最好；Firefox/WebKit 为实验选项，需提前安装对应 Playwright 浏览器",
+    "default": "chromium"
+  },
+  "browser_cdp_url": {
+    "description": "共享 Chromium CDP 地址",
+    "type": "string",
+    "hint": "可选，例如 http://127.0.0.1:9222；默认仅允许本机地址",
+    "default": ""
+  },
+  "allow_remote_cdp": {
+    "description": "允许远程 CDP",
+    "type": "bool",
+    "hint": "仅在可信内网需要连接非本机 Chromium 时开启；CDP 无鉴权，勿暴露公网",
+    "default": false
+  },
+  "browser_max_pages": {
+    "description": "最大并发渲染页面数",
+    "type": "int",
+    "hint": "建议 1-2；更高并发会显著增加内存占用",
+    "default": 2
+  },
+  "auto_install_browser": {
+    "description": "运行时自动安装浏览器",
+    "type": "bool",
+    "hint": "默认关闭。建议在部署阶段执行 python -m playwright install chromium；开启后首次渲染会下载浏览器。",
+    "default": false
+  },
+  "render_scale": {
+    "description": "卡片渲染倍率",
+    "type": "int",
+    "hint": "1-4；默认 3 可输出 1296x1620，倍率 4 内存占用更高",
+    "default": 3
   }
 }

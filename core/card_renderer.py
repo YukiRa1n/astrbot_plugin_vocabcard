@@ -3,6 +3,7 @@
 卡片渲染器
 """
 
+import html as _html
 from pathlib import Path
 from typing import Dict
 
@@ -62,6 +63,8 @@ class CardRenderer:
 
     def _render_simple(self, template_name: str, variables: Dict) -> str:
         """简单字符串替换渲染（回退方案）"""
+        import re as _re
+
         template_path = self.templates_dir / template_name
 
         if not template_path.exists():
@@ -70,11 +73,25 @@ class CardRenderer:
         with open(template_path, "r", encoding="utf-8") as f:
             template = f.read()
 
+        # 简单处理 {% if var %}...{% endif %}：var 为真时保留块内容
+        def _if_block(match: _re.Match) -> str:
+            var_name = match.group(1).strip()
+            content = match.group(2)
+            if variables.get(var_name):
+                return content
+            return ""
+
+        html = _re.sub(
+            r"{%\s*if\s+(\w+)\s*%}(.*?){%\s*endif\s*%}",
+            _if_block,
+            template,
+            flags=_re.DOTALL,
+        )
+
         # 简单的占位符替换
-        html = template
         for key, value in variables.items():
             placeholder = f"{{{{{key}}}}}"
-            html = html.replace(placeholder, str(value))
+            html = html.replace(placeholder, _html.escape(str(value)))
 
         return html
 
@@ -84,5 +101,5 @@ class CardRenderer:
             return
 
         self.env.filters["upper"] = lambda x: x.upper() if x else ""
-        self.env.filters["truncate"] = lambda x, n: x[:n] + "..." if len(x) > n else x
+        self.env.filters["truncate"] = lambda x, n=255: (x[:n] + "..." if x and len(x) > n else (x or ""))
         self.env.filters["default"] = lambda x, d: x if x else d

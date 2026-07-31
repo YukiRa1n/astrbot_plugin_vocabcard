@@ -6,7 +6,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 
 from .language_config import LanguageConfig
 from .word_loader import WordLoader
@@ -26,7 +26,7 @@ class WordEntry:
     pos: Optional[str] = None
     definition: str = ""
     example: Optional[str] = None
-    extra_fields: Dict[str, any] = field(default_factory=dict)
+    extra_fields: Dict[str, Any] = field(default_factory=dict)
 
     def validate(self) -> bool:
         """
@@ -115,7 +115,7 @@ class BaseLanguageHandler(ABC):
         """
         return self.config.fonts
 
-    def get_styles(self) -> Dict[str, any]:
+    def get_styles(self) -> Dict[str, Any]:
         """
         获取样式配置
 

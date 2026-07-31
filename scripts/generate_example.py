@@ -37,7 +37,7 @@ async def main():
         word_data = words[2]
 
     # 加载模板
-    template_path = project_dir / "languages" / "english" / "templates" / "card.html"
+    template_path = project_dir / "templates" / "card.html"
     with open(template_path, "r", encoding="utf-8") as f:
         template = f.read()
 

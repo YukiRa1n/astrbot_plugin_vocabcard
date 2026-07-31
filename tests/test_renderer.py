@@ -6,7 +6,9 @@ ImageRenderer 单元测试
 import os
 import pytest
 import asyncio
-from core.image_renderer import get_image_renderer
+from playwright.async_api import Error as PlaywrightError
+
+from core.image_renderer import ImageRenderer, get_image_renderer
 
 # 使用 pytest-asyncio 运行异步测试
 pytestmark = pytest.mark.asyncio
@@ -102,3 +104,26 @@ async def test_renderer_concurrency(tmp_path):
     # 清理 pool
     await renderer.close()
     assert renderer._active_pages_count == 0
+
+
+@pytest.mark.parametrize("engine", ["chromium", "firefox", "webkit"])
+async def test_configured_browser_engine_smoke(tmp_path, engine):
+    renderer = ImageRenderer(max_pages=1, engine=engine)
+    output = tmp_path / f"{engine}.png"
+    try:
+        await renderer.render_to_file(
+            "<html><body style='margin:0;background:#fff'>engine</body></html>",
+            str(output),
+            width=200,
+            height=120,
+            scale=1,
+        )
+    except PlaywrightError as exc:
+        if "Executable doesn't exist" in str(exc):
+            pytest.skip(f"Playwright {engine} is not installed")
+        raise
+    finally:
+        await renderer.close()
+
+    assert output.exists()
+    assert output.stat().st_size > 0

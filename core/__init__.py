@@ -8,6 +8,7 @@ from .base_handler import BaseLanguageHandler, WordEntry
 from .word_loader import WordLoader
 from .card_renderer import CardRenderer
 from .language_manager import LanguageManager
+from .security import validate_cdp_url
 
 __all__ = [
     "LanguageConfig",
@@ -16,4 +17,5 @@ __all__ = [
     "WordLoader",
     "CardRenderer",
     "LanguageManager",
+    "validate_cdp_url",
 ]

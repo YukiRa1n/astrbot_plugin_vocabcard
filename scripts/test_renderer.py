@@ -3,6 +3,7 @@
 测试 Playwright 渲染器
 """
 
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -15,7 +16,7 @@ CDN_BACKGROUNDS = [
 ]
 
 
-def main():
+async def main():
     """测试渲染器"""
     from core.image_renderer import get_image_renderer
 
@@ -29,7 +30,7 @@ def main():
     word_data = words[2]  # extraordinary
 
     # 加载模板
-    template_path = project_dir / "languages" / "english" / "templates" / "card.html"
+    template_path = project_dir / "templates" / "card.html"
     with open(template_path, "r", encoding="utf-8") as f:
         template = f.read()
 
@@ -66,10 +67,10 @@ def main():
     # 测试渲染
     renderer = get_image_renderer()
     output_path = str(project_dir / "test_output.png")
-    renderer.render_to_file(html, output_path, width=432, height=540, scale=2)
+    await renderer.render_to_file(html, output_path, width=432, height=540, scale=2)
 
     print(f"测试成功！图片已生成: {output_path}")
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
