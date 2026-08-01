@@ -35,6 +35,15 @@ from .languages.idiom.handler import IdiomLanguageHandler
 from .languages.classical.handler import ClassicalLanguageHandler
 from .languages.radio.handler import RadioLanguageHandler
 
+
+def _safe_int(value, default: int) -> int:
+    """配置项安全强转 int，非法值回退默认，避免插件加载失败。"""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 # 敏感命令：测试推送最大延迟（秒）
 MAX_TEST_DELAY_SECONDS = 300
 
@@ -46,21 +55,8 @@ _CSS_URL_SCHEMES = frozenset({"http", "https", "file", "data"})
 # 公共渲染命令限流：每用户 30 秒 1 次（重型浏览器渲染，防止刷屏 DoS）
 _RATE_LIMIT_WINDOW = 30
 _RATE_LIMIT_MAX_CALLS = 1
+_RATE_LIMIT_MSG = f"⏳ 操作太频繁，请 {_RATE_LIMIT_WINDOW} 秒后再试"
 
-
-# 主题色列表 - 用于随机选择
-THEME_COLORS = [
-    "#2F4F4F",  # 深石板灰
-    "#4B0082",  # 靛蓝
-    "#006400",  # 深绿
-    "#8B0000",  # 深红
-    "#2F2F4F",  # 深紫蓝
-    "#4A4A6A",  # 灰紫
-    "#1a1a2e",  # 深夜蓝
-    "#16213e",  # 海军蓝
-    "#0f3460",  # 深蓝
-    "#533483",  # 紫罗兰
-]
 
 # CDN 背景图列表 - 使用阿里云 OSS
 CDN_BACKGROUNDS = [
@@ -193,12 +189,6 @@ class VocabCardPlugin(Star):
         except ValueError as e:
             logger.warning(f"Invalid browser_cdp_url, ignoring: {e}")
             browser_cdp_url = ""
-        def _safe_int(value, default: int) -> int:
-            """配置项安全强转 int，非法值回退默认，避免插件加载失败。"""
-            try:
-                return int(value)
-            except (TypeError, ValueError):
-                return default
 
         browser_max_pages = _safe_int(
             self.config.get("browser_max_pages", 2), 2
@@ -270,11 +260,10 @@ class VocabCardPlugin(Star):
         if cached and os.path.exists(cached):
             self._cached_image_path = cached
         word_text = state.get("current_word") or ""
-        if word_text and self.words:
-            for w in self.words:
-                if w.word == word_text:
-                    self._current_word = w
-                    break
+        if word_text:
+            self._current_word = next(
+                (w for w in self.words if w.word == word_text), None
+            )
         logger.info(
             "Restored schedule state: generated=%s pushed=%s cache=%s",
             self._today_generated,
@@ -320,8 +309,7 @@ class VocabCardPlugin(Star):
     def _get_background_url(self, word: WordEntry) -> str:
         """获取背景图 URL（优先 CDN，其次 AI 生成，最后本地图片）"""
         # 优先使用 CDN 图片（阿里云 OSS）
-        use_cdn = self.config.get("use_cdn_background", True)
-        if use_cdn and CDN_BACKGROUNDS:
+        if self.config.get("use_cdn_background", True):
             return random.choice(CDN_BACKGROUNDS)
 
         # 回退到 AI 生成（如果启用）
@@ -720,9 +708,8 @@ class VocabCardPlugin(Star):
     def _render_template(self, word: WordEntry) -> str:
         """Render HTML template using Handler"""
         bg_url = self._sanitize_css_url(self._get_background_url(word))
-        theme_colors = self.current_handler.config.theme_colors
         theme_color = self._sanitize_theme_color(
-            random.choice(theme_colors) if theme_colors else random.choice(THEME_COLORS)
+            random.choice(self.current_handler.get_theme_colors())
         )
         bg_x = random.randint(0, 100)
         bg_y = random.randint(0, 100)
@@ -885,9 +872,7 @@ class VocabCardPlugin(Star):
     async def cmd_vocab(self, event: AstrMessageEvent):
         """手动获取一个单词卡片（不计入学习进度）"""
         if not self._check_rate_limit(event):
-            yield event.plain_result(
-                f"⏳ 操作太频繁，请 {_RATE_LIMIT_WINDOW} 秒后再试"
-            )
+            yield event.plain_result(_RATE_LIMIT_MSG)
             return
         word = await self._select_word()
         if not word:
@@ -1072,9 +1057,7 @@ class VocabCardPlugin(Star):
         不带参数则随机选一个单词
         """
         if not self._check_rate_limit(event):
-            yield event.plain_result(
-                f"⏳ 操作太频繁，请 {_RATE_LIMIT_WINDOW} 秒后再试"
-            )
+            yield event.plain_result(_RATE_LIMIT_MSG)
             return
         # 查找单词
         if word_input:

@@ -3,9 +3,7 @@
 英语语种处理器
 """
 
-import random
 from typing import List
-from pathlib import Path
 
 from ...core.base_handler import BaseLanguageHandler, WordEntry
 
@@ -96,32 +94,3 @@ class EnglishLanguageHandler(BaseLanguageHandler):
 
         # 渲染模板
         return self.renderer.render("card.html", template_vars)
-
-    def _get_background_url(self, word: WordEntry, backgrounds: List[Path]) -> str:
-        """
-        获取背景图 URL
-
-        Args:
-            word: 单词数据
-            backgrounds: 背景图列表
-
-        Returns:
-            背景图 URL
-        """
-        if not backgrounds:
-            # 降级方案：纯色背景
-            return "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1080' height='1350'%3E%3Crect fill='%231a1a2e' width='100%25' height='100%25'/%3E%3C/svg%3E"
-
-        bg_path = random.choice(backgrounds)
-        return bg_path.as_uri()
-
-    def _random_bg_position(self) -> str:
-        """
-        生成随机背景位置
-
-        Returns:
-            CSS 背景位置字符串
-        """
-        bg_x = random.randint(0, 100)
-        bg_y = random.randint(0, 100)
-        return f"{bg_x}% {bg_y}%"
