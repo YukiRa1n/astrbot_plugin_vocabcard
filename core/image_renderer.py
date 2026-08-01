@@ -347,9 +347,9 @@ class ImageRenderer:
         try:
             page = await self._acquire_page(width, height, scale)
 
-            # 超时限制保护渲染 (15 秒超时)
+            # 超时限制保护渲染 (60 秒超时，CDN 背景图首次加载可能较慢)
             await asyncio.wait_for(
-                page.goto(Path(temp_html_path).as_uri()), timeout=15.0
+                page.goto(Path(temp_html_path).as_uri()), timeout=60.0
             )
 
             # 等待背景图等静止加载
@@ -410,9 +410,9 @@ class ImageRenderer:
         try:
             page = await self._acquire_page(width, height, scale)
 
-            # 超时限制保护
+            # 超时限制保护 (60 秒超时，CDN 背景图首次加载可能较慢)
             await asyncio.wait_for(
-                page.goto(Path(temp_html_path).as_uri()), timeout=15.0
+                page.goto(Path(temp_html_path).as_uri()), timeout=60.0
             )
 
             try:
