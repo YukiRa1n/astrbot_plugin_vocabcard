@@ -191,19 +191,30 @@ class ImageRenderer:
                 allow_install=self.auto_install_browser,
             )
         self._playwright = await async_playwright().start()
-        if self.cdp_url:
-            self._browser = await self._playwright.chromium.connect_over_cdp(
-                self.cdp_url
-            )
-            self._owns_browser = False
-            logger.info("已连接共享 Chromium CDP: %s", self.cdp_url)
-        else:
-            browser_type = getattr(self._playwright, self.engine)
-            self._browser = await browser_type.launch(
-                **self._launch_options(self.engine)
-            )
-            self._owns_browser = True
-            logger.info("Playwright %s 浏览器进程启动成功", self.engine)
+        try:
+            if self.cdp_url:
+                self._browser = await self._playwright.chromium.connect_over_cdp(
+                    self.cdp_url
+                )
+                self._owns_browser = False
+                logger.info("已连接共享 Chromium CDP: %s", self.cdp_url)
+            else:
+                browser_type = getattr(self._playwright, self.engine)
+                self._browser = await browser_type.launch(
+                    **self._launch_options(self.engine)
+                )
+                self._owns_browser = True
+                logger.info("Playwright %s 浏览器进程启动成功", self.engine)
+        except Exception:
+            # launch/connect 失败时清理已启动的 Playwright 驱动，
+            # 避免下次重试再次 start 覆盖 self._playwright 造成泄漏。
+            try:
+                await self._playwright.stop()
+            except Exception:
+                pass
+            self._playwright = None
+            self._browser = None
+            raise
 
     async def _create_page(self, width: int, height: int, scale: int):
         context = await self._browser.new_context(

@@ -583,7 +583,7 @@ async def test_persist_and_restore_schedule_state(tmp_path, monkeypatch):
     plugin._current_word = MagicMock(word="hello")
     plugin.words = [MagicMock(word="hello")]
 
-    plugin._persist_schedule_state()
+    await plugin._persist_schedule_state()
     assert (tmp_path / "schedule_state.json").exists()
 
     plugin2 = _make_plugin()
