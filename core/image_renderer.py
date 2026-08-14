@@ -68,7 +68,24 @@ async def _ensure_browser_installed(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await process.communicate()
+        try:
+            # 带超时安装，防止网络挂起永久阻塞整个渲染管线
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(), timeout=300
+            )
+        except asyncio.TimeoutError:
+            logger.error(
+                "安装 Playwright %s 超时（300s），终止安装进程", engine
+            )
+            try:
+                process.kill()
+            except Exception:
+                pass
+            try:
+                await process.wait()
+            except Exception:
+                pass
+            raise RuntimeError(f"安装 Playwright {engine} 超时") from launch_failure
         if process.returncode != 0:
             detail = stderr.decode(errors="replace") or stdout.decode(errors="replace")
             raise RuntimeError(
@@ -180,8 +197,24 @@ class ImageRenderer:
             await self._force_cleanup_loop_resources()
             self._loop = current_loop
 
-        if self._browser is not None:
+        if self._browser is not None and self._browser.is_connected():
             return
+
+        # 浏览器已断连（崩溃或 CDP 断开），清理旧实例后重新初始化
+        if self._browser is not None and not self._browser.is_connected():
+            logger.warning("检测到浏览器断连，正在重新初始化...")
+            try:
+                if self._owns_browser:
+                    await self._browser.close()
+            except Exception:
+                pass
+            self._browser = None
+            if self._playwright is not None:
+                try:
+                    await self._playwright.stop()
+                except Exception:
+                    pass
+                self._playwright = None
 
         from playwright.async_api import async_playwright
 

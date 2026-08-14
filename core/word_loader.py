@@ -68,14 +68,10 @@ class WordLoader:
         if not isinstance(data, list) or len(data) == 0:
             return False
 
-        # 抽样验证前 10 条数据
-        # 抽样验证前 10 条数据
-        # required_fields = {"word"}  # 移除硬编码字段检查，由 Handler 自行处理
-        for item in data[: min(10, len(data))]:
+        # 全量验证所有记录，避免坏记录导致 handler 崩溃后整库变空
+        for item in data:
             if not isinstance(item, dict):
                 return False
-            # if not required_fields.issubset(item.keys()):
-            #     return False
 
         return True
 

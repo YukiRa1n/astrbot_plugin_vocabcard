@@ -196,6 +196,12 @@ class VocabCardPlugin(Star):
         # 公共渲染命令限流状态：{sender_id: deque[timestamp]}
         self._rate_limit: Dict[str, collections.deque] = {}
 
+        # 后台任务集合（延迟推送、图片清理等），terminate 时统一取消
+        self._background_tasks: set[asyncio.Task] = set()
+
+        # 部分推送失败时记录已成功目标，重试时跳过
+        self._push_succeeded_umos: set[str] = set()
+
         browser_engine = str(self.config.get("browser_engine", "chromium")).strip()
         if browser_engine not in {"chromium", "firefox", "webkit"}:
             logger.warning(
@@ -284,6 +290,10 @@ class VocabCardPlugin(Star):
                 state = json.load(f)
         except Exception as e:
             logger.warning(f"Failed to load schedule state: {e}")
+            return
+
+        if not isinstance(state, dict):
+            logger.warning(f"schedule_state.json 类型错误（期望 dict，得到 {type(state).__name__}），使用默认状态")
             return
 
         today = get_beijing_time().strftime("%Y-%m-%d")
@@ -629,8 +639,11 @@ class VocabCardPlugin(Star):
                 )
                 await asyncio.sleep(backoff)
 
-    def _parse_time(self, time_str: str) -> tuple:
+    def _parse_time(self, time_str) -> tuple:
         """Parse time string HH:MM with validation"""
+        if not isinstance(time_str, str):
+            logger.warning(f"Time format invalid type '{type(time_str).__name__}': {time_str}, using default 08:00")
+            return (8, 0)
         try:
             parts = time_str.split(":")
             hour, minute = int(parts[0]), int(parts[1])
@@ -677,6 +690,15 @@ class VocabCardPlugin(Star):
         # 如果推送尚未完成，且推送时间未到
         if not self._today_pushed and push_datetime > now:
             targets.append(push_datetime)
+
+        # 重启补跑：如果生成/推送时间已过但任务未完成，立即执行
+        if not targets:
+            if not self._today_generated and gen_datetime <= now:
+                logger.info("生成时间已过但未完成，立即补跑")
+                return now
+            if not self._today_pushed and push_datetime <= now:
+                logger.info("推送时间已过但未完成，立即补跑")
+                return now
 
         # 如果今天的任务都完成了，计算明天的第一个任务（生成时间）
         if not targets:
@@ -828,6 +850,16 @@ class VocabCardPlugin(Star):
         except Exception:
             sender = event.unified_msg_origin
         now = time.monotonic()
+
+        # 全局淘汰：定期清理过期 sender 条目，防止唯一用户字典无界增长
+        if len(self._rate_limit) > 1000:
+            expired = [
+                k for k, v in self._rate_limit.items()
+                if not v or now - v[-1] > _RATE_LIMIT_WINDOW
+            ]
+            for k in expired:
+                self._rate_limit.pop(k, None)
+
         stamps = self._rate_limit.get(sender)
         if stamps is None:
             stamps = collections.deque()
@@ -911,9 +943,21 @@ class VocabCardPlugin(Star):
             logger.warning("没有已注册的推送目标")
             return PushResult(attempted_count=0, success_count=0)
 
+        # 部分失败重试时，跳过已成功目标
+        skip = getattr(self, "_push_succeeded_umos", set())
+        if skip:
+            remaining = [umo for umo in target_groups if umo not in skip]
+            if not remaining:
+                logger.info("所有目标均已成功推送，无需重试")
+                return PushResult(attempted_count=0, success_count=0)
+            logger.info(f"跳过 {len(skip)} 个已成功目标，重试剩余 {len(remaining)} 个")
+            target_groups = remaining
+
         success_count = 0
         word_text = self._current_word.word if self._current_word else "单词"
 
+        # 记录本次推送成功的目标，用于部分失败时只重试失败目标
+        succeeded_umos: set[str] = set()
         for umo in target_groups:
             try:
                 # 构建消息链
@@ -928,6 +972,7 @@ class VocabCardPlugin(Star):
                     logger.warning(f"推送到 {umo} 失败：平台返回 False")
                     continue
                 success_count += 1
+                succeeded_umos.add(umo)
                 logger.info(f"已推送到: {umo}")
             except Exception as e:
                 logger.error(f"推送到 {umo} 失败: {e}")
@@ -935,9 +980,7 @@ class VocabCardPlugin(Star):
         logger.info(f"每日单词推送完成: {success_count}/{len(target_groups)}")
 
         # 仅当全部目标成功才提交进度并删图；部分失败时保留缓存，
-        # 让调度器在后续窗口重试失败目标（避免丢词且不重复推已成功的群）。
-        # 当前实现为简单起见，部分失败时不提交（词会在次日重置后重来），
-        # 比"记成功+删图导致失败群永远收不到"更安全。
+        # 且记录已成功目标，后续重试只发送给失败目标。
         if success_count == len(target_groups) and success_count > 0:
             if self._current_word is not None:
                 await self._mark_word_sent(self._current_word.word)
@@ -948,9 +991,11 @@ class VocabCardPlugin(Star):
                 logger.warning(f"清理缓存图片失败: {e}")
             self._cached_image_path = None
             self._current_word = None
+            self._push_succeeded_umos = set()
             await self._persist_schedule_state()
         elif success_count > 0:
-            # 部分失败：不提交进度、不删图，保留缓存下次重试
+            # 部分失败：记录已成功目标，重试时跳过
+            self._push_succeeded_umos = succeeded_umos
             logger.warning(
                 f"部分目标推送失败（{success_count}/{len(target_groups)}），"
                 "保留缓存供后续重试"
@@ -1051,10 +1096,12 @@ class VocabCardPlugin(Star):
         - /vocab_test          # 立即生成并发送到当前会话（快速测试）
         - /vocab_test 60       # 60秒后执行完整定时推送流程（最长 300 秒）
         """
-        # 参数解析 + 上限
-        if delay_seconds.isdigit():
-            delay = int(delay_seconds)
-        else:
+        # 参数解析 + 上限（安全整数转换，兼容 Unicode 数字和 null）
+        try:
+            delay = int(delay_seconds) if isinstance(delay_seconds, (str, int, float)) else 0
+            if delay < 0:
+                delay = 0
+        except (ValueError, TypeError):
             delay = 0
         if delay > MAX_TEST_DELAY_SECONDS:
             yield event.plain_result(
@@ -1128,7 +1175,11 @@ class VocabCardPlugin(Star):
                     # 步骤 2: 推送
                     async with self._workflow_lock:
                         result = await self._push_daily_card()
-                    self._today_pushed = result.success_count > 0
+                    # 只有全部目标成功才标记为已推送；部分成功保留未推送状态
+                    self._today_pushed = (
+                        result.attempted_count > 0
+                        and result.success_count == result.attempted_count
+                    )
                     await self._persist_schedule_state()
                     logger.info(
                         f"vocab_test 延迟推送完成：{result.success_count}/{result.attempted_count}"
@@ -1136,12 +1187,18 @@ class VocabCardPlugin(Star):
                 except Exception as e:
                     logger.error(f"vocab_test 延迟推送失败:\n{traceback.format_exc()}")
                 finally:
-                    # 恢复配置（不在 generator 上下文中执行）
+                    # 精确移除临时注册的 UMO，不恢复全局快照
+                    # （避免覆盖延迟期间其他 /vocab_register 的新注册）
                     if temp_registered:
-                        self.config["target_groups"] = original_targets
-                        self.config.save_config()
+                        current = self.config.get("target_groups", []) or []
+                        if umo in current:
+                            current = [t for t in current if t != umo]
+                            self.config["target_groups"] = current
+                            self.config.save_config()
 
-            asyncio.get_running_loop().create_task(_delayed_push())
+            task = asyncio.get_running_loop().create_task(_delayed_push())
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
             yield event.plain_result(f"✅ 已安排 {delay} 秒后的延迟推送")
 
     @filter.command("vocab_preview")
@@ -1355,6 +1412,13 @@ class VocabCardPlugin(Star):
                 await self._scheduler_task
             except asyncio.CancelledError:
                 pass
+        # 取消所有后台任务（延迟推送、图片清理等）
+        for t in self._background_tasks:
+            if not t.done():
+                t.cancel()
+        if self._background_tasks:
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+        self._background_tasks.clear()
         try:
             await self._image_renderer.close()
         except Exception as e:
