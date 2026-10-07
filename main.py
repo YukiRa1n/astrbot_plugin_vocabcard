@@ -129,6 +129,12 @@ class PushResult:
 
     attempted_count: int
     success_count: int
+    # 尚未注册任何推送目标：属于正常状态，不应计为推送失败
+    no_targets: bool = False
+
+
+# 没有推送目标时重新检查的间隔（秒），当天稍后注册的会话仍能收到卡片
+NO_TARGET_RECHECK_SECONDS = 60
 
 
 @register(
@@ -187,6 +193,7 @@ class VocabCardPlugin(Star):
         self._today_pushed: bool = False
         self._last_check_date: str = ""
         self._scheduler_consecutive_failures = 0
+        self._no_target_notice_date: str = ""
         self._restore_schedule_state()
 
         # 进度文件保存锁（防止并发写入冲突）
@@ -588,6 +595,9 @@ class VocabCardPlugin(Star):
                         logger.info("开始推送每日单词卡片...")
                         async with self._workflow_lock:
                             result = await self._push_daily_card()
+                        if result.no_targets:
+                            await self._wait_for_push_targets(today_str)
+                            continue
                         # 仅全部目标成功才算"今日已推送"；部分失败时保留
                         # 缓存并在后续窗口重试失败目标（_push_daily_card 在
                         # 部分失败时不提交进度、不删图）。
@@ -932,6 +942,21 @@ class VocabCardPlugin(Star):
             logger.error(f"生成每日卡片失败: {e}")
             return False
 
+    async def _wait_for_push_targets(self, today_str: str) -> None:
+        """没有推送目标时静默等待，直到有会话注册或进入新的一天。
+
+        不计入连续失败、不标记今日已推送：避免退避重试刷屏，也保证
+        当天稍后用 /vocab_register 注册的会话仍能收到当天的卡片。
+        等待期间只轮询配置，不经过调度主循环，因此不会重复输出日志。
+        """
+        if self._no_target_notice_date != today_str:
+            logger.info("尚无已注册的推送目标，卡片已生成，注册后将自动推送")
+            self._no_target_notice_date = today_str
+        while not self.config.get("target_groups", []):
+            await asyncio.sleep(NO_TARGET_RECHECK_SECONDS)
+            if get_beijing_time().strftime("%Y-%m-%d") != today_str:
+                return
+
     async def _push_daily_card(self) -> PushResult:
         """推送卡片到已注册的群聊"""
         if not self._cached_image_path or not os.path.exists(self._cached_image_path):
@@ -940,8 +965,8 @@ class VocabCardPlugin(Star):
 
         target_groups = self.config.get("target_groups", [])
         if not target_groups:
-            logger.warning("没有已注册的推送目标")
-            return PushResult(attempted_count=0, success_count=0)
+            logger.debug("没有已注册的推送目标")
+            return PushResult(attempted_count=0, success_count=0, no_targets=True)
 
         # 部分失败重试时，跳过已成功目标
         skip = getattr(self, "_push_succeeded_umos", set())

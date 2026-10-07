@@ -736,3 +736,120 @@ async def test_safe_int_config_parsing():
         assert plugin._bg_load_timeout == 5000
     finally:
         monkeypatch.undo()
+
+
+async def test_push_without_targets_reports_no_targets(tmp_path):
+    """没有推送目标是正常状态，应与推送失败区分开。"""
+    plugin = _make_plugin()
+    image_path = tmp_path / "card.png"
+    image_path.write_bytes(b"png")
+    plugin._cached_image_path = str(image_path)
+
+    result = await plugin._push_daily_card()
+
+    assert result.no_targets is True
+    assert result.attempted_count == 0
+    assert image_path.exists()
+
+
+def _plugin_with_targets(targets_by_poll):
+    """target_groups 依次返回 targets_by_poll 中的值，耗尽后保持最后一个。"""
+    plugin = _make_plugin()
+    values = list(targets_by_poll)
+
+    def get(key, default=None):
+        if key == "target_groups":
+            return values.pop(0) if len(values) > 1 else values[0]
+        return default
+
+    plugin.config.get = MagicMock(side_effect=get)
+    return plugin
+
+
+async def test_wait_for_push_targets_returns_after_register_and_logs_once():
+    """等待期间静默轮询，注册后返回；不计失败、不标记已推送、只提示一次。"""
+    import astrbot_plugin_vocabcard.main as main_module
+
+    plugin = _plugin_with_targets([[], [], [], ["session-1"]])
+    plugin._scheduler_consecutive_failures = 0
+    plugin._today_pushed = False
+    sleep = AsyncMock()
+    today = main_module.get_beijing_time().strftime("%Y-%m-%d")
+    with patch.object(main_module.asyncio, "sleep", sleep), patch.object(
+        main_module, "logger"
+    ) as logger:
+        await plugin._wait_for_push_targets(today)
+
+    assert logger.info.call_count == 1
+    assert logger.warning.call_count == 0
+    assert sleep.await_count == 3
+    sleep.assert_awaited_with(main_module.NO_TARGET_RECHECK_SECONDS)
+    assert plugin._scheduler_consecutive_failures == 0
+    assert plugin._today_pushed is False
+
+
+async def test_wait_for_push_targets_returns_on_new_day():
+    import astrbot_plugin_vocabcard.main as main_module
+
+    plugin = _plugin_with_targets([[]])
+    sleep = AsyncMock()
+    with patch.object(main_module.asyncio, "sleep", sleep), patch.object(
+        main_module, "logger"
+    ):
+        # 传入一个已过去的日期，模拟等待期间跨过了 0 点
+        await plugin._wait_for_push_targets("2000-01-01")
+
+    assert sleep.await_count == 1
+
+
+def _fake_playwright(launch):
+    """构造 async_playwright() 替身，chromium.executable_path 指向不存在的文件。"""
+    browser_type = MagicMock()
+    browser_type.executable_path = "/nonexistent/chrome"
+    browser_type.launch = launch
+    playwright = MagicMock()
+    playwright.chromium = browser_type
+
+    class _Manager:
+        async def __aenter__(self):
+            return playwright
+
+        async def __aexit__(self, *exc):
+            return False
+
+    return lambda: _Manager()
+
+
+async def test_browser_check_accepts_headless_shell_only():
+    """只装 headless shell 时完整版路径不存在，但能启动即视为可用。"""
+    import playwright.async_api
+    from astrbot_plugin_vocabcard.core import image_renderer
+
+    browser = MagicMock()
+    browser.close = AsyncMock()
+    launch = AsyncMock(return_value=browser)
+    image_renderer._installed_browsers.discard("chromium")
+    try:
+        with patch.object(
+            playwright.async_api, "async_playwright", _fake_playwright(launch)
+        ):
+            await image_renderer._ensure_browser_installed("chromium")
+        launch.assert_awaited_once_with(headless=True)
+        browser.close.assert_awaited_once()
+        assert "chromium" in image_renderer._installed_browsers
+    finally:
+        image_renderer._installed_browsers.discard("chromium")
+
+
+async def test_browser_check_reports_unavailable_when_launch_fails():
+    import playwright.async_api
+    from astrbot_plugin_vocabcard.core import image_renderer
+
+    launch = AsyncMock(side_effect=RuntimeError("Executable doesn't exist"))
+    image_renderer._installed_browsers.discard("chromium")
+    with patch.object(
+        playwright.async_api, "async_playwright", _fake_playwright(launch)
+    ):
+        with pytest.raises(RuntimeError, match="is unavailable"):
+            await image_renderer._ensure_browser_installed("chromium")
+    assert "chromium" not in image_renderer._installed_browsers

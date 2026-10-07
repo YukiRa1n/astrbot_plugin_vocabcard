@@ -118,8 +118,9 @@ async def test_configured_browser_engine_smoke(tmp_path, engine):
             height=120,
             scale=1,
         )
-    except PlaywrightError as exc:
-        if "Executable doesn't exist" in str(exc):
+    except (PlaywrightError, RuntimeError) as exc:
+        # 渲染器会把启动失败包装为 "Playwright <engine> is unavailable"
+        if "Executable doesn't exist" in str(exc) or "is unavailable" in str(exc):
             pytest.skip(f"Playwright {engine} is not installed")
         raise
     finally:

@@ -42,10 +42,12 @@ async def _ensure_browser_installed(
         try:
             from playwright.async_api import async_playwright
 
+            # 以实际启动来判断可用性：chromium.executable_path 指向完整版
+            # Chromium，而 headless 启动使用的是 headless shell，只装了
+            # `playwright install chromium --only-shell` 时路径检查会误判缺失。
             async with async_playwright() as p:
-                executable = Path(getattr(p, engine).executable_path)
-                if not executable.is_file():
-                    raise FileNotFoundError(executable)
+                browser = await getattr(p, engine).launch(headless=True)
+                await browser.close()
             _installed_browsers.add(engine)
             _browser_installed = engine == "chromium" or _browser_installed
             logger.info("Playwright %s browser ready", engine)
