@@ -57,6 +57,7 @@ astrbot_api.AstrBotConfig = MagicMock()
 astrbot_event = sys.modules["astrbot.api.event"]
 astrbot_event.filter = MagicMock()
 astrbot_event.filter.command = lambda *a, **kw: lambda fn: fn
+astrbot_event.filter.permission_type = lambda *a, **kw: lambda fn: fn
 astrbot_event.AstrMessageEvent = MagicMock()
 astrbot_event.MessageChain = MagicMock()
 
@@ -82,7 +83,7 @@ pytestmark = pytest.mark.asyncio
 _MOCK_DATA_DIRS = []
 
 
-def _make_plugin():
+def _make_plugin(data_dir=None, words=None):
     """Create a VocabCardPlugin instance with mocked dependencies.
 
     StarTools.get_data_dir is mocked to return an isolated temp directory so
@@ -90,7 +91,9 @@ def _make_plugin():
     """
     import tempfile as _tempfile
 
-    _temp = _tempfile.mkdtemp(prefix="vocabcard_test_")
+    _temp = str(data_dir) if data_dir is not None else _tempfile.mkdtemp(
+        prefix="vocabcard_test_"
+    )
     _MOCK_DATA_DIRS.append(_temp)
 
     ctx = MagicMock()
@@ -106,7 +109,12 @@ def _make_plugin():
     }.get(key, default))
     with patch("astrbot.api.star.StarTools") as _mock_star_tools:
         _mock_star_tools.get_data_dir = MagicMock(return_value=_temp)
-        plugin = VocabCardPlugin(ctx, config)
+        if words is None:
+            plugin = VocabCardPlugin(ctx, config)
+        else:
+            with patch.object(VocabCardPlugin, "_load_words", return_value=words):
+                plugin = VocabCardPlugin(ctx, config)
+    plugin.context = ctx
     return plugin
 
 
@@ -248,6 +256,7 @@ async def test_switch_language_resets_cache():
     plugin._current_word = MagicMock()
     plugin._today_generated = True
     plugin._today_pushed = True
+    plugin._push_succeeded_umos = {"stale-target"}
 
     plugin._load_words = MagicMock(return_value=[])
     plugin._load_progress = MagicMock(return_value={"sent_words": [], "last_push_date": ""})
@@ -269,6 +278,7 @@ async def test_switch_language_resets_cache():
     assert plugin._current_word is None
     assert plugin._today_generated is False
     assert plugin._today_pushed is False
+    assert plugin._push_succeeded_umos == set()
 
 
 # ---- _today_pushed reset on date change ----
@@ -853,3 +863,224 @@ async def test_browser_check_reports_unavailable_when_launch_fails():
         with pytest.raises(RuntimeError, match="is unavailable"):
             await image_renderer._ensure_browser_installed("chromium")
     assert "chromium" not in image_renderer._installed_browsers
+
+
+# ===== Regression tests for non-mutating previews and resumable pushes =====
+
+async def test_select_word_read_only_does_not_reset_completed_progress():
+    plugin = _make_plugin()
+    from astrbot_plugin_vocabcard.core.base_handler import WordEntry
+
+    plugin.words = [WordEntry(word="a", definition="1")]
+    plugin.progress = {"sent_words": ["a"], "last_push_date": "2026-01-01"}
+    plugin._save_progress = AsyncMock()
+
+    word = await plugin._select_word(update_progress=False)
+
+    assert word is not None
+    assert plugin.progress["sent_words"] == ["a"]
+    plugin._save_progress.assert_not_awaited()
+
+
+async def test_select_word_default_still_resets_completed_progress():
+    plugin = _make_plugin()
+    from astrbot_plugin_vocabcard.core.base_handler import WordEntry
+
+    plugin.words = [WordEntry(word="a", definition="1")]
+    plugin.progress = {"sent_words": ["a"], "last_push_date": ""}
+    plugin._save_progress = AsyncMock()
+
+    word = await plugin._select_word()
+
+    assert word is not None
+    assert plugin.progress["sent_words"] == []
+    plugin._save_progress.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    ("method_name", "args"),
+    [
+        ("cmd_vocab", ()),
+        ("cmd_preview", ("",)),
+        ("cmd_test_push", ("0",)),
+    ],
+)
+async def test_immediate_commands_select_words_without_progress_changes(method_name, args):
+    plugin = _make_plugin()
+    plugin._check_rate_limit = MagicMock(return_value=True)
+    plugin._select_word = AsyncMock(return_value=None)
+    event = MagicMock()
+
+    async for _ in getattr(plugin, method_name)(event, *args):
+        pass
+
+    plugin._select_word.assert_awaited_once_with(update_progress=False)
+
+
+async def test_partial_push_state_restores_and_retries_only_failed_target(tmp_path):
+    from astrbot_plugin_vocabcard.core.base_handler import WordEntry
+    import json
+
+    word = WordEntry(word="daily", definition="definition")
+    image_path = tmp_path / "daily.png"
+    image_path.write_bytes(b"png")
+    plugin = _make_plugin(data_dir=tmp_path, words=[word])
+    plugin._cached_image_path = str(image_path)
+    plugin._current_word = word
+    plugin.config.get = MagicMock(
+        side_effect=lambda key, default=None: ["A", "B"]
+        if key == "target_groups"
+        else default
+    )
+
+    async def first_send(umo, chain):
+        if umo == "B":
+            raise RuntimeError("offline")
+        return True
+
+    plugin.context.send_message = AsyncMock(side_effect=first_send)
+    first = await plugin._push_daily_card()
+
+    assert (first.attempted_count, first.success_count) == (2, 1)
+    with open(tmp_path / "schedule_state.json", "r", encoding="utf-8") as f:
+        state = json.load(f)
+    assert state["push_succeeded_umos"] == ["A"]
+
+    plugin2 = _make_plugin(data_dir=tmp_path, words=[word])
+    plugin2.config.get = MagicMock(
+        side_effect=lambda key, default=None: ["A", "B"]
+        if key == "target_groups"
+        else default
+    )
+    plugin2.context.send_message = AsyncMock(return_value=True)
+    second = await plugin2._push_daily_card()
+
+    assert (second.attempted_count, second.success_count) == (1, 1)
+    assert [call.args[0] for call in plugin2.context.send_message.await_args_list] == ["B"]
+    assert plugin2.progress["sent_words"] == ["daily"]
+    assert plugin2._cached_image_path is None
+    assert plugin2._current_word is None
+    assert plugin2._push_succeeded_umos == set()
+    assert not image_path.exists()
+    with open(tmp_path / "schedule_state.json", "r", encoding="utf-8") as f:
+        final_state = json.load(f)
+    assert final_state["push_succeeded_umos"] == []
+
+
+async def test_restore_rejects_invalid_succeeded_umo_list(tmp_path):
+    import json
+
+    today = __import__("astrbot_plugin_vocabcard.main", fromlist=["get_beijing_time"]).get_beijing_time().strftime("%Y-%m-%d")
+    (tmp_path / "schedule_state.json").write_text(
+        json.dumps({"date": today, "push_succeeded_umos": ["A", 1]}),
+        encoding="utf-8",
+    )
+
+    plugin = _make_plugin(data_dir=tmp_path)
+
+    assert plugin._push_succeeded_umos == set()
+
+
+async def test_partial_push_successes_accumulate_across_retries(tmp_path):
+    image_path = tmp_path / "daily.png"
+    image_path.write_bytes(b"png")
+    plugin = _make_plugin()
+    plugin._cached_image_path = str(image_path)
+    plugin._current_word = MagicMock(word="daily")
+    plugin.config.get = MagicMock(
+        side_effect=lambda key, default=None: ["A", "B", "C"]
+        if key == "target_groups"
+        else default
+    )
+    attempt_round = 0
+
+    async def send(umo, chain):
+        if (attempt_round == 1 and umo == "A") or (
+            attempt_round == 2 and umo == "B"
+        ):
+            return True
+        raise RuntimeError("offline")
+
+    plugin.context.send_message = AsyncMock(side_effect=send)
+    attempt_round = 1
+    await plugin._push_daily_card()
+    assert plugin._push_succeeded_umos == {"A"}
+
+    attempt_round = 2
+    await plugin._push_daily_card()
+    assert plugin._push_succeeded_umos == {"A", "B"}
+
+
+async def test_removed_failed_target_allows_existing_successes_to_complete(tmp_path):
+    image_path = tmp_path / "daily.png"
+    image_path.write_bytes(b"png")
+    plugin = _make_plugin()
+    plugin._cached_image_path = str(image_path)
+    plugin._current_word = MagicMock(word="daily")
+    plugin._push_succeeded_umos = {"A"}
+    plugin.config.get = MagicMock(
+        side_effect=lambda key, default=None: ["A"]
+        if key == "target_groups"
+        else default
+    )
+    plugin.context.send_message = AsyncMock()
+
+    result = await plugin._push_daily_card()
+
+    assert (result.attempted_count, result.success_count) == (1, 1)
+    plugin.context.send_message.assert_not_awaited()
+    assert plugin.progress["sent_words"] == ["daily"]
+    assert plugin._cached_image_path is None
+    assert plugin._current_word is None
+    assert plugin._push_succeeded_umos == set()
+
+
+async def test_new_daily_card_clears_previous_push_successes(tmp_path):
+    image_path = tmp_path / "new.png"
+    image_path.write_bytes(b"png")
+    plugin = _make_plugin()
+    plugin._push_succeeded_umos = {"A"}
+    plugin._select_word = AsyncMock(return_value=MagicMock(word="new"))
+    plugin._generate_card_image = AsyncMock(return_value=str(image_path))
+
+    assert await plugin._generate_daily_card() is True
+    assert plugin._push_succeeded_umos == set()
+
+
+async def test_new_day_clears_previous_push_successes():
+    plugin = _make_plugin()
+    plugin._last_check_date = "2000-01-01"
+    plugin._push_succeeded_umos = {"A"}
+    plugin._time_reached = MagicMock(return_value=False)
+    persisted = asyncio.Event()
+    plugin._persist_schedule_state = AsyncMock(side_effect=persisted.set)
+
+    task = asyncio.create_task(plugin._schedule_loop())
+    try:
+        await asyncio.wait_for(persisted.wait(), timeout=1)
+        assert plugin._push_succeeded_umos == set()
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_scheduled_image_cleanup_is_cancelled_by_terminate(tmp_path):
+    image_path = tmp_path / "temporary.png"
+    image_path.write_bytes(b"png")
+    plugin = _make_plugin()
+    plugin._image_renderer.close = AsyncMock()
+    before = asyncio.all_tasks()
+    plugin._schedule_image_cleanup(str(image_path))
+    cleanup_tasks = asyncio.all_tasks() - before
+    assert len(cleanup_tasks) == 1
+    cleanup_task = cleanup_tasks.pop()
+
+    try:
+        assert cleanup_task in plugin._background_tasks
+        await plugin.terminate()
+        assert cleanup_task.cancelled()
+        assert image_path.exists()
+    finally:
+        if not cleanup_task.done():
+            cleanup_task.cancel()
+        await asyncio.gather(cleanup_task, return_exceptions=True)

@@ -194,6 +194,8 @@ class VocabCardPlugin(Star):
         self._last_check_date: str = ""
         self._scheduler_consecutive_failures = 0
         self._no_target_notice_date: str = ""
+        # 部分推送失败时记录已成功目标，重试时跳过
+        self._push_succeeded_umos: set[str] = set()
         self._restore_schedule_state()
 
         # 进度文件保存锁（防止并发写入冲突）
@@ -205,9 +207,6 @@ class VocabCardPlugin(Star):
 
         # 后台任务集合（延迟推送、图片清理等），terminate 时统一取消
         self._background_tasks: set[asyncio.Task] = set()
-
-        # 部分推送失败时记录已成功目标，重试时跳过
-        self._push_succeeded_umos: set[str] = set()
 
         browser_engine = str(self.config.get("browser_engine", "chromium")).strip()
         if browser_engine not in {"chromium", "firefox", "webkit"}:
@@ -320,6 +319,13 @@ class VocabCardPlugin(Star):
         self._last_check_date = today
         self._today_generated = _safe_bool(state.get("today_generated", False))
         self._today_pushed = _safe_bool(state.get("today_pushed", False))
+        succeeded_umos = state.get("push_succeeded_umos", [])
+        if isinstance(succeeded_umos, list) and all(
+            isinstance(umo, str) for umo in succeeded_umos
+        ):
+            self._push_succeeded_umos = set(succeeded_umos)
+        else:
+            logger.warning("schedule_state.json 中的 push_succeeded_umos 类型错误，忽略")
         cached = state.get("cached_image_path") or ""
         # 安全边界：cached_image_path 来自本地 schedule_state.json，
         # 若被篡改可能指向任意文件；后续推送会读取/发送/删除它。
@@ -360,6 +366,7 @@ class VocabCardPlugin(Star):
             "today_pushed": self._today_pushed,
             "cached_image_path": self._cached_image_path or "",
             "current_word": self._current_word.word if self._current_word else "",
+            "push_succeeded_umos": sorted(self._push_succeeded_umos),
             "language": self.current_language,
         }
         try:
@@ -536,6 +543,7 @@ class VocabCardPlugin(Star):
                     self._today_pushed = False
                     self._cached_image_path = None
                     self._current_word = None
+                    self._push_succeeded_umos = set()
                     self._last_check_date = today_str
                     self._scheduler_consecutive_failures = 0
                     await self._persist_schedule_state()
@@ -721,8 +729,12 @@ class VocabCardPlugin(Star):
         # 返回最近的目标时间
         return min(targets) if targets else None
 
-    async def _select_word(self) -> Optional[WordEntry]:
-        """选择一个未推送过的单词"""
+    async def _select_word(self, update_progress: bool = True) -> Optional[WordEntry]:
+        """Select an unsent word.
+
+        Args:
+            update_progress: Whether an exhausted deck may reset and save progress.
+        """
         if not self.words:
             return None
 
@@ -732,11 +744,12 @@ class VocabCardPlugin(Star):
         # 如果全部推送完毕
         if not available:
             if _safe_bool(self.config.get("reset_on_complete", True)):
-                # 重置进度
-                self.progress["sent_words"] = []
-                await self._save_progress()
+                if update_progress:
+                    # 重置进度
+                    self.progress["sent_words"] = []
+                    await self._save_progress()
+                    logger.info("所有单词已推送完毕，已重置进度")
                 available = self.words
-                logger.info("所有单词已推送完毕，已重置进度")
             else:
                 logger.warning("所有单词已推送完毕，且未开启自动重置")
                 return None
@@ -909,7 +922,9 @@ class VocabCardPlugin(Star):
                 logger.warning(f"清理临时图片失败: {e}")
 
         try:
-            loop.create_task(_cleanup())
+            task = loop.create_task(_cleanup())
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
         except RuntimeError:
             # 事件循环关闭时放弃延迟清理
             try:
@@ -935,6 +950,7 @@ class VocabCardPlugin(Star):
                     logger.warning(f"清理旧缓存图片失败: {e}")
             self._cached_image_path = image_path
             self._current_word = word
+            self._push_succeeded_umos = set()
             await self._persist_schedule_state()
             logger.info(f"已生成每日单词卡片: {word.word}")
             return True
@@ -969,21 +985,23 @@ class VocabCardPlugin(Star):
             return PushResult(attempted_count=0, success_count=0, no_targets=True)
 
         # 部分失败重试时，跳过已成功目标
-        skip = getattr(self, "_push_succeeded_umos", set())
+        skip = self._push_succeeded_umos
+        all_previously_succeeded = False
         if skip:
             remaining = [umo for umo in target_groups if umo not in skip]
             if not remaining:
-                logger.info("所有目标均已成功推送，无需重试")
-                return PushResult(attempted_count=0, success_count=0)
-            logger.info(f"跳过 {len(skip)} 个已成功目标，重试剩余 {len(remaining)} 个")
-            target_groups = remaining
+                logger.info("所有当前目标均已成功推送，复用完成流程")
+                all_previously_succeeded = True
+            else:
+                logger.info(f"跳过 {len(skip)} 个已成功目标，重试剩余 {len(remaining)} 个")
+                target_groups = remaining
 
-        success_count = 0
+        success_count = len(target_groups) if all_previously_succeeded else 0
         word_text = self._current_word.word if self._current_word else "单词"
 
         # 记录本次推送成功的目标，用于部分失败时只重试失败目标
         succeeded_umos: set[str] = set()
-        for umo in target_groups:
+        for umo in ([] if all_previously_succeeded else target_groups):
             try:
                 # 构建消息链
                 chain = MessageChain()
@@ -1019,8 +1037,9 @@ class VocabCardPlugin(Star):
             self._push_succeeded_umos = set()
             await self._persist_schedule_state()
         elif success_count > 0:
-            # 部分失败：记录已成功目标，重试时跳过
-            self._push_succeeded_umos = succeeded_umos
+            # 部分失败：合并已成功目标并立即持久化，重试时跳过
+            self._push_succeeded_umos.update(succeeded_umos)
+            await self._persist_schedule_state()
             logger.warning(
                 f"部分目标推送失败（{success_count}/{len(target_groups)}），"
                 "保留缓存供后续重试"
@@ -1039,7 +1058,7 @@ class VocabCardPlugin(Star):
         if not self._check_rate_limit(event):
             yield event.plain_result(_RATE_LIMIT_MSG)
             return
-        word = await self._select_word()
+        word = await self._select_word(update_progress=False)
         if not word:
             yield event.plain_result("没有可用的单词数据")
             return
@@ -1138,7 +1157,7 @@ class VocabCardPlugin(Star):
         if delay == 0:
             try:
                 # 生成卡片（静默）
-                word = await self._select_word()
+                word = await self._select_word(update_progress=False)
                 if not word:
                     yield event.plain_result("没有可用的单词")
                     return
@@ -1248,7 +1267,7 @@ class VocabCardPlugin(Star):
                 yield event.plain_result(f"未找到单词: {word_input}")
                 return
         else:
-            word = await self._select_word()
+            word = await self._select_word(update_progress=False)
             if not word:
                 yield event.plain_result("没有可用的单词数据")
                 return
@@ -1393,6 +1412,7 @@ class VocabCardPlugin(Star):
                 self._current_word = None
                 self._today_generated = False
                 self._today_pushed = False
+                self._push_succeeded_umos = set()
                 await self._persist_schedule_state()
 
             # 保存配置
