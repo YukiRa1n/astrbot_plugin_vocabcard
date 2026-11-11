@@ -60,6 +60,14 @@ class EnglishLanguageHandler(BaseLanguageHandler):
         Returns:
             渲染后的 HTML 字符串
         """
+        default_word_size = self.config.styles.get("word_size", "52px")
+        if len(word.word) > 14:
+            word_size = "36px"
+        elif len(word.word) > 11:
+            word_size = "42px"
+        else:
+            word_size = default_word_size
+
         # 准备模板变量
         template_vars = {
             # 单词数据
@@ -73,12 +81,12 @@ class EnglishLanguageHandler(BaseLanguageHandler):
             "theme_color": kwargs.get("theme_color", "#2F4F4F"),
             "bg_position": kwargs.get("bg_position", "50% 50%"),
             # 字体配置
-            "font_word": self.config.fonts.get("word", "serif"),
-            "font_phonetic": self.config.fonts.get("phonetic", "monospace"),
-            "font_definition": self.config.fonts.get("definition", "sans-serif"),
-            "font_example": self.config.fonts.get("example", "serif"),
+            "font_word": self.get_safe_font("word", "serif"),
+            "font_phonetic": self.get_safe_font("phonetic", "monospace"),
+            "font_definition": self.get_safe_font("definition", "sans-serif"),
+            "font_example": self.get_safe_font("example", "serif"),
             # 样式配置
-            "word_size": self.config.styles.get("word_size", "52px"),
+            "word_size": word_size,
             "word_letter_spacing": self.config.styles.get(
                 "word_letter_spacing", "-1px"
             ),

@@ -4,13 +4,13 @@ Tests for applied fixes: _parse_time validation, _is_within_minute_window,
 MD5 card filename, browser install lock, and pool get timeout.
 """
 
+import atexit
+import shutil as _shutil
 import sys
 import os
 import asyncio
 import datetime
 import hashlib
-import types
-import importlib
 from unittest.mock import MagicMock, AsyncMock, patch
 
 import pytest
@@ -34,9 +34,10 @@ if not os.path.exists(_init_path):
         f.write("")
     _created_init = True
 
-import atexit
 if _created_init:
-    atexit.register(lambda: os.remove(_init_path) if os.path.exists(_init_path) else None)
+    atexit.register(
+        lambda: os.remove(_init_path) if os.path.exists(_init_path) else None
+    )
 
 # Mock astrbot modules before importing main
 for mod in [
@@ -64,9 +65,11 @@ astrbot_event.MessageChain = MagicMock()
 # Configure astrbot.api.star mock
 astrbot_star = sys.modules["astrbot.api.star"]
 
+
 class _FakeStarBase:
     def __init__(self, context=None):
-        pass
+        self.context = context
+
 
 astrbot_star.Context = MagicMock()
 astrbot_star.Star = _FakeStarBase
@@ -75,12 +78,12 @@ astrbot_star.register = lambda *a, **kw: lambda cls: cls
 astrbot_star.StarTools = MagicMock()
 
 # Now import the main module
-from astrbot_plugin_vocabcard.main import VocabCardPlugin
-
-pytestmark = pytest.mark.asyncio
-
+from astrbot_plugin_vocabcard.main import VocabCardPlugin  # noqa: E402
 
 _MOCK_DATA_DIRS = []
+atexit.register(
+    lambda: [_shutil.rmtree(d, ignore_errors=True) for d in _MOCK_DATA_DIRS]
+)
 
 
 def _make_plugin(data_dir=None, words=None):
@@ -91,34 +94,37 @@ def _make_plugin(data_dir=None, words=None):
     """
     import tempfile as _tempfile
 
-    _temp = str(data_dir) if data_dir is not None else _tempfile.mkdtemp(
-        prefix="vocabcard_test_"
-    )
-    _MOCK_DATA_DIRS.append(_temp)
+    if data_dir is None:
+        _temp = _tempfile.mkdtemp(prefix="vocabcard_test_")
+        _MOCK_DATA_DIRS.append(_temp)
+    else:
+        _temp = str(data_dir)
 
     ctx = MagicMock()
     config = MagicMock()
-    config.get = MagicMock(side_effect=lambda key, default=None: {
-        "current_language": "english",
-        "push_time_generate": "07:30",
-        "push_time_send": "08:00",
-        "use_cdn_background": True,
-        "learning_mode": "random",
-        "reset_on_complete": True,
-        "target_groups": [],
-    }.get(key, default))
+    config.get = MagicMock(
+        side_effect=lambda key, default=None: {
+            "current_language": "english",
+            "push_time_generate": "07:30",
+            "push_time_send": "08:00",
+            "use_cdn_background": True,
+            "learning_mode": "random",
+            "reset_on_complete": True,
+            "target_groups": [],
+        }.get(key, default)
+    )
     with patch("astrbot.api.star.StarTools") as _mock_star_tools:
         _mock_star_tools.get_data_dir = MagicMock(return_value=_temp)
-        if words is None:
-            plugin = VocabCardPlugin(ctx, config)
-        else:
-            with patch.object(VocabCardPlugin, "_load_words", return_value=words):
+        if words is not None:
+            with patch.object(VocabCardPlugin, "_load_words", return_value=list(words)):
                 plugin = VocabCardPlugin(ctx, config)
-    plugin.context = ctx
+        else:
+            plugin = VocabCardPlugin(ctx, config)
     return plugin
 
 
 # ---- _parse_time validation ----
+
 
 async def test_parse_time_invalid_hour_returns_default():
     plugin = _make_plugin()
@@ -137,21 +143,25 @@ async def test_parse_time_valid():
 
 # ---- _is_within_minute_window ----
 
+
 async def test_is_within_minute_window_match():
     plugin = _make_plugin()
-    now = datetime.datetime(2026, 6, 12, 7, 30, 15,
-                            tzinfo=datetime.timezone(datetime.timedelta(hours=8)))
+    now = datetime.datetime(
+        2026, 6, 12, 7, 30, 15, tzinfo=datetime.timezone(datetime.timedelta(hours=8))
+    )
     assert plugin._is_within_minute_window(now, (7, 30)) is True
 
 
 async def test_is_within_minute_window_no_match():
     plugin = _make_plugin()
-    now = datetime.datetime(2026, 6, 12, 9, 45, 0,
-                            tzinfo=datetime.timezone(datetime.timedelta(hours=8)))
+    now = datetime.datetime(
+        2026, 6, 12, 9, 45, 0, tzinfo=datetime.timezone(datetime.timedelta(hours=8))
+    )
     assert plugin._is_within_minute_window(now, (7, 30)) is False
 
 
 # ---- MD5 card filename (no special chars) ----
+
 
 async def test_card_filename_uses_hash_no_special_chars():
     word_text = "look/into"
@@ -162,6 +172,7 @@ async def test_card_filename_uses_hash_no_special_chars():
 
 
 # ---- ImageRenderer pool get timeout ----
+
 
 async def test_renderer_pool_get_timeout():
     from astrbot_plugin_vocabcard.core.image_renderer import ImageRenderer
@@ -190,20 +201,25 @@ async def test_renderer_pool_get_timeout():
         async def fast_wait_for(coro, timeout=None):
             return await original_wait_for(coro, timeout=0.1)
 
-        with patch("astrbot_plugin_vocabcard.core.image_renderer.asyncio.wait_for",
-                    side_effect=fast_wait_for):
+        with patch(
+            "astrbot_plugin_vocabcard.core.image_renderer.asyncio.wait_for",
+            side_effect=fast_wait_for,
+        ):
             await renderer._acquire_page(432, 540, 4)
 
 
 # ---- Browser install lock exists ----
 
+
 async def test_browser_install_lock_exists():
     from astrbot_plugin_vocabcard.core import image_renderer
+
     assert hasattr(image_renderer, "_browser_install_lock")
     assert isinstance(image_renderer._browser_install_lock, asyncio.Lock)
 
 
 # ---- _mark_word_sent deduplication ----
+
 
 async def test_mark_word_sent_no_duplicates():
     plugin = _make_plugin()
@@ -225,30 +241,31 @@ async def test_mark_word_sent_no_duplicates():
 
 # ---- _today_pushed flag prevents re-push ----
 
+
 async def test_today_pushed_flag_prevents_repush():
     plugin = _make_plugin()
     plugin._today_pushed = True
     plugin._cached_image_path = "/fake/path.png"
 
-    now = datetime.datetime(2026, 6, 12, 8, 0, 30,
-                            tzinfo=datetime.timezone(datetime.timedelta(hours=8)))
+    now = datetime.datetime(
+        2026, 6, 12, 8, 0, 30, tzinfo=datetime.timezone(datetime.timedelta(hours=8))
+    )
     push_time = (8, 0)
 
     should_push = (
-        plugin._is_within_minute_window(now, push_time)
-        and not plugin._today_pushed
+        plugin._is_within_minute_window(now, push_time) and not plugin._today_pushed
     )
     assert should_push is False
 
     plugin._today_pushed = False
     should_push = (
-        plugin._is_within_minute_window(now, push_time)
-        and not plugin._today_pushed
+        plugin._is_within_minute_window(now, push_time) and not plugin._today_pushed
     )
     assert should_push is True
 
 
 # ---- cmd_switch_language resets cache state ----
+
 
 async def test_switch_language_resets_cache():
     plugin = _make_plugin()
@@ -256,10 +273,11 @@ async def test_switch_language_resets_cache():
     plugin._current_word = MagicMock()
     plugin._today_generated = True
     plugin._today_pushed = True
-    plugin._push_succeeded_umos = {"stale-target"}
 
     plugin._load_words = MagicMock(return_value=[])
-    plugin._load_progress = MagicMock(return_value={"sent_words": [], "last_push_date": ""})
+    plugin._load_progress = MagicMock(
+        return_value={"sent_words": [], "last_push_date": ""}
+    )
     plugin.lang_manager.is_registered = MagicMock(return_value=True)
     plugin.lang_manager.get_handler = MagicMock(return_value=plugin.current_handler)
     plugin.config.save_config = MagicMock()
@@ -278,10 +296,10 @@ async def test_switch_language_resets_cache():
     assert plugin._current_word is None
     assert plugin._today_generated is False
     assert plugin._today_pushed is False
-    assert plugin._push_succeeded_umos == set()
 
 
 # ---- _today_pushed reset on date change ----
+
 
 async def test_today_pushed_resets_on_date_change():
     """Verify _schedule_loop resets _today_pushed when the date changes."""
@@ -323,6 +341,7 @@ async def test_today_pushed_not_reset_on_same_date():
 
 # ---- Atomic write to progress file uses .tmp ----
 
+
 async def test_save_progress_atomic_write_uses_tmp_file(tmp_path, monkeypatch):
     """Verify _save_progress writes to a .tmp file first, then renames atomically."""
     plugin = _make_plugin()
@@ -333,6 +352,7 @@ async def test_save_progress_atomic_write_uses_tmp_file(tmp_path, monkeypatch):
     # Force the aiofiles ImportError path so we exercise the sync fallback,
     # which still must use the .tmp + os.replace pattern.
     import builtins
+
     real_import = builtins.__import__
 
     def fake_import(name, *args, **kwargs):
@@ -352,6 +372,7 @@ async def test_save_progress_atomic_write_uses_tmp_file(tmp_path, monkeypatch):
     assert not tmp_file.exists()
 
     import json as _json
+
     with open(progress_file, "r", encoding="utf-8") as f:
         data = _json.load(f)
     assert data["sent_words"] == ["alpha", "beta"]
@@ -374,12 +395,12 @@ async def test_atomic_sync_write_helper(tmp_path, monkeypatch):
 
 # ---- scripts/test_renderer.py syntax sanity ----
 
+
 def test_scripts_test_renderer_uses_await():
     """Verify scripts/test_renderer.py calls render_to_file with await."""
     import pathlib
-    script_path = (
-        pathlib.Path(_plugin_dir) / "scripts" / "test_renderer.py"
-    )
+
+    script_path = pathlib.Path(_plugin_dir) / "scripts" / "test_renderer.py"
     assert script_path.exists(), f"missing {script_path}"
     source = script_path.read_text(encoding="utf-8")
     # The buggy line was `renderer.render_to_file(...)` without await.
@@ -394,9 +415,11 @@ def test_scripts_test_renderer_uses_await():
 
 # ---- _mark_word_sent calls correct method name ----
 
+
 async def test_mark_word_sent_calls_atomic_sync_write(tmp_path, monkeypatch):
     """Verify _mark_word_sent fallback calls _atomic_sync_write, not _sync_write_progress."""
     import builtins
+
     real_import = builtins.__import__
 
     def fake_import(name, *args, **kwargs):
@@ -416,12 +439,14 @@ async def test_mark_word_sent_calls_atomic_sync_write(tmp_path, monkeypatch):
     assert progress_file.exists()
 
     import json as _json
+
     with open(progress_file, "r", encoding="utf-8") as f:
         data = _json.load(f)
     assert "testword" in data["sent_words"]
 
 
 # ---- metadata.yaml version matches register decorator ----
+
 
 def test_metadata_version_matches_register():
     """Verify metadata.yaml version matches the register decorator version."""
@@ -435,6 +460,7 @@ def test_metadata_version_matches_register():
         metadata = yaml.safe_load(f)
 
     import ast
+
     main_path = pathlib.Path(_plugin_dir) / "main.py"
     source = main_path.read_text(encoding="utf-8")
     tree = ast.parse(source)
@@ -456,9 +482,11 @@ def test_metadata_version_matches_register():
 
 # ---- card_japanese.html has no literal \n in CSS ----
 
+
 def test_card_japanese_no_literal_backslash_n_in_css():
     """Verify card_japanese.html has no literal \\n in CSS."""
     import pathlib
+
     template_path = pathlib.Path(_plugin_dir) / "templates" / "card_japanese.html"
     assert template_path.exists(), f"missing {template_path}"
 
@@ -474,6 +502,7 @@ def test_card_japanese_no_literal_backslash_n_in_css():
 
 
 # ---- architecture and lifecycle optimization ----
+
 
 async def test_generate_daily_card_does_not_commit_progress_before_push(tmp_path):
     plugin = _make_plugin()
@@ -502,9 +531,9 @@ async def test_push_commits_progress_only_after_successful_delivery(tmp_path):
     plugin.context.send_message = AsyncMock()
     plugin._mark_word_sent = AsyncMock()
     plugin.config.get = MagicMock(
-        side_effect=lambda key, default=None: ["session-1"]
-        if key == "target_groups"
-        else default
+        side_effect=lambda key, default=None: (
+            ["session-1"] if key == "target_groups" else default
+        )
     )
 
     result = await plugin._push_daily_card()
@@ -524,9 +553,9 @@ async def test_push_failure_keeps_artifact_and_does_not_commit(tmp_path):
     plugin.context.send_message = AsyncMock(side_effect=RuntimeError("offline"))
     plugin._mark_word_sent = AsyncMock()
     plugin.config.get = MagicMock(
-        side_effect=lambda key, default=None: ["session-1"]
-        if key == "target_groups"
-        else default
+        side_effect=lambda key, default=None: (
+            ["session-1"] if key == "target_groups" else default
+        )
     )
 
     result = await plugin._push_daily_card()
@@ -542,6 +571,7 @@ async def test_plugin_has_workflow_lock():
 
 
 # ---- security & schedule persistence ----
+
 
 def test_validate_cdp_url_local_ok():
     from astrbot_plugin_vocabcard.core.security import validate_cdp_url
@@ -601,11 +631,13 @@ async def test_persist_and_restore_schedule_state(tmp_path, monkeypatch):
     plugin2.words = [MagicMock(word="hello")]
     plugin2._restore_schedule_state()
     # only restores when date matches today — force date to today
-    today = __import__("datetime").datetime.now(
-        __import__("datetime").timezone(
-            __import__("datetime").timedelta(hours=8)
+    today = (
+        __import__("datetime")
+        .datetime.now(
+            __import__("datetime").timezone(__import__("datetime").timedelta(hours=8))
         )
-    ).strftime("%Y-%m-%d")
+        .strftime("%Y-%m-%d")
+    )
     state_path = tmp_path / "schedule_state.json"
     import json as _json
 
@@ -623,7 +655,12 @@ async def test_persist_and_restore_schedule_state(tmp_path, monkeypatch):
 async def test_time_reached():
     plugin = _make_plugin()
     now = datetime.datetime(
-        2026, 7, 12, 8, 0, 0,
+        2026,
+        7,
+        12,
+        8,
+        0,
+        0,
         tzinfo=datetime.timezone(datetime.timedelta(hours=8)),
     )
     assert plugin._time_reached(now, (8, 0)) is True
@@ -635,12 +672,15 @@ async def test_time_reached():
 
 # ---- file:// URL percent-encoding ----
 
+
 def test_offline_background_url_uses_percent_encoding():
     """file:// URL 必须正确百分号编码，空格/#/% 不能破坏路径。"""
     import pathlib
+
     plugin = _make_plugin()
     bg = pathlib.Path("D:/photos/my photo #1.jpg")
-    url = plugin._get_offline_background_url if False else bg.as_uri()
+    plugin.offline_backgrounds = [bg]
+    url = plugin._get_offline_background_url()
     assert "my%20photo" in url
     assert "%23" in url
     assert "#1.jpg" not in url.replace("%23", "")  # '#' 不得作为 fragment 出现
@@ -649,15 +689,21 @@ def test_offline_background_url_uses_percent_encoding():
 def test_css_url_sanitizer_strips_injection():
     """CSS url() 上下文注入应被清洗。"""
     plugin = _make_plugin()
-    assert plugin._sanitize_css_url("https://example.com/a.jpg") == "https://example.com/a.jpg"
-    # 引号/分号/闭合括号被剥离
+    assert (
+        plugin._sanitize_css_url("https://example.com/a.jpg")
+        == "https://example.com/a.jpg"
+    )
+    # 引号/分号/闭合括号/反斜杠/换行被拒绝或剥离
     assert ")" not in plugin._sanitize_css_url("x') ;}@import")
     assert "'" not in plugin._sanitize_css_url("x') ;}")
-    # 非白名单 scheme 被拒绝
+    assert plugin._sanitize_css_url("javascript:alert(1)") == ""
     assert plugin._sanitize_css_url("javascript://x") == ""
     assert plugin._sanitize_css_url("vbscript://x") == ""
-    # data: 仅允许 image
+    assert plugin._sanitize_css_url("//attacker.example/share/a.png") == ""
+    assert plugin._sanitize_css_url("file://attacker.example/share/a.png") == ""
+    # data: 仅允许无注入字符的 image
     assert plugin._sanitize_css_url("data:text/html,<script>") == ""
+    assert plugin._sanitize_css_url('data:image/png;base64,AAAA")}') == ""
     assert plugin._sanitize_css_url("data:image/png;base64,AAAA") != ""
 
 
@@ -671,6 +717,7 @@ def test_theme_color_sanitizer_accepts_hex_rejects_other():
 
 
 # ---- Rate limiting ----
+
 
 async def test_rate_limit_blocks_second_call_within_window():
     plugin = _make_plugin()
@@ -689,7 +736,6 @@ async def test_rate_limit_allows_after_window(tmp_path, monkeypatch):
     event.get_sender_id = MagicMock(return_value="user-2")
     event.unified_msg_origin = "group|1|user-2"
 
-    import time as _time
     assert plugin._check_rate_limit(event) is True
 
     # 快进 31 秒，旧时间戳过期
@@ -714,12 +760,13 @@ async def test_rate_limit_separates_users():
 
 # ---- Safe int config parsing ----
 
-async def test_safe_int_config_parsing():
+
+async def test_safe_int_config_parsing(tmp_path):
     """非法配置值不应导致插件加载失败。"""
     from astrbot_plugin_vocabcard.main import VocabCardPlugin as VCP
     import builtins
+
     real_import = builtins.__import__
-    called = []
 
     def fake_import(name, *args, **kwargs):
         if name == "aiofiles" or name.startswith("aiofiles."):
@@ -732,17 +779,19 @@ async def test_safe_int_config_parsing():
     try:
         ctx = MagicMock()
         config = MagicMock()
-        config.get = MagicMock(side_effect=lambda key, default=None: {
-            "current_language": "english",
-            "browser_max_pages": "oops",       # 非法整数
-            "render_scale": "abc",             # 非法整数
-            "bg_load_timeout": "",             # 空串
-            "target_groups": [],
-        }.get(key, default))
+        config.get = MagicMock(
+            side_effect=lambda key, default=None: {
+                "current_language": "english",
+                "browser_max_pages": "oops",  # 非法整数
+                "render_scale": "abc",  # 非法整数
+                "bg_load_timeout": "",  # 空串
+                "target_groups": [],
+            }.get(key, default)
+        )
         with patch("astrbot.api.star.StarTools") as _ms:
-            _ms.get_data_dir = MagicMock(return_value="C:/tmp/x")
+            _ms.get_data_dir = MagicMock(return_value=str(tmp_path))
             plugin = VCP(ctx, config)
-        assert plugin._render_scale == 3   # 回退默认
+        assert plugin._render_scale == 3  # 回退默认
         assert plugin._bg_load_timeout == 5000
     finally:
         monkeypatch.undo()
@@ -785,9 +834,10 @@ async def test_wait_for_push_targets_returns_after_register_and_logs_once():
     plugin._today_pushed = False
     sleep = AsyncMock()
     today = main_module.get_beijing_time().strftime("%Y-%m-%d")
-    with patch.object(main_module.asyncio, "sleep", sleep), patch.object(
-        main_module, "logger"
-    ) as logger:
+    with (
+        patch.object(main_module.asyncio, "sleep", sleep),
+        patch.object(main_module, "logger") as logger,
+    ):
         await plugin._wait_for_push_targets(today)
 
     assert logger.info.call_count == 1
@@ -803,8 +853,9 @@ async def test_wait_for_push_targets_returns_on_new_day():
 
     plugin = _plugin_with_targets([[]])
     sleep = AsyncMock()
-    with patch.object(main_module.asyncio, "sleep", sleep), patch.object(
-        main_module, "logger"
+    with (
+        patch.object(main_module.asyncio, "sleep", sleep),
+        patch.object(main_module, "logger"),
     ):
         # 传入一个已过去的日期，模拟等待期间跨过了 0 点
         await plugin._wait_for_push_targets("2000-01-01")
@@ -865,7 +916,247 @@ async def test_browser_check_reports_unavailable_when_launch_fails():
     assert "chromium" not in image_renderer._installed_browsers
 
 
+# ===== Code Review Regression Tests (2026-11-10) =====
+
+
+def test_style_block_preserves_ai_url_params_and_svg_fallback():
+    """<style> RAWTEXT 内不能把 URL 的 & 转义成 &amp;，也不能把纯色 SVG 的 ' 转成 &#39; 截断。"""
+    from astrbot_plugin_vocabcard.core.base_handler import WordEntry
+
+    plugin = _make_plugin()
+    plugin.offline_backgrounds = []
+    plugin.config.get = MagicMock(
+        side_effect=lambda key, default=None: {
+            "use_cdn_background": False,
+            "enable_ai_background": False,
+            "default_bg_url": "",
+        }.get(key, default)
+    )
+    word = WordEntry(
+        word="look/into", pos="v.", definition="调查", example="Look into it."
+    )
+    fallback_html = plugin._render_template(word)
+    assert "&#39;" not in fallback_html
+    assert "data:image/svg+xml," in fallback_html
+
+    plugin.config.get = MagicMock(
+        side_effect=lambda key, default=None: {
+            "use_cdn_background": False,
+            "enable_ai_background": True,
+            "default_bg_url": "",
+        }.get(key, default)
+    )
+    ai_html = plugin._render_template(word)
+    assert "look%2Finto" in ai_html
+    assert "?width=1920&height=2400&nologo=true&model=flux&enhance=true" in ai_html
+    assert "&amp;height=" not in ai_html
+
+
+def test_validate_cdp_url_rejects_unspecified_0_0_0_0():
+    from astrbot_plugin_vocabcard.core.security import validate_cdp_url
+
+    with pytest.raises(ValueError):
+        validate_cdp_url("http://0.0.0.0:9222")
+    assert (
+        validate_cdp_url("http://0.0.0.0:9222", allow_remote=True)
+        == "http://0.0.0.0:9222"
+    )
+    assert validate_cdp_url("http://127.0.0.2:9222") == "http://127.0.0.2:9222"
+    assert validate_cdp_url("http://[::1]:9222") == "http://[::1]:9222"
+
+
+async def test_image_renderer_cancellation_releases_slot_and_wakes_waiter(tmp_path):
+    """取消渲染或渲染抛错时，必须归还槽位并立即唤醒排队的 _acquire_page。"""
+    from astrbot_plugin_vocabcard.core.image_renderer import ImageRenderer
+
+    renderer = ImageRenderer(max_pages=1)
+    renderer._init_browser = AsyncMock()
+    renderer._loop = asyncio.get_running_loop()
+
+    goto_started = asyncio.Event()
+
+    async def slow_goto(_uri):
+        goto_started.set()
+        await asyncio.sleep(60)
+
+    page1 = MagicMock()
+    page1.is_closed.return_value = False
+    page1.goto = AsyncMock(side_effect=slow_goto)
+    page1.context = MagicMock()
+    page1.context.close = AsyncMock()
+
+    page2 = MagicMock()
+    page2.is_closed.return_value = False
+    page2.context = MagicMock()
+    page2.context.close = AsyncMock()
+
+    pages = [page1, page2]
+
+    async def create_page(_w, _h, scale):
+        p = pages.pop(0)
+        renderer._page_scales[p] = scale
+        return p
+
+    renderer._create_page = create_page
+
+    render_task = asyncio.create_task(
+        renderer.render_to_file("<html></html>", str(tmp_path / "out.png"), 100, 100, 1)
+    )
+    await goto_started.wait()
+    assert renderer._active_pages_count == 1
+
+    waiter = asyncio.create_task(renderer._acquire_page(100, 100, 1, wait_timeout=2.0))
+    await asyncio.sleep(0.02)
+
+    render_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await render_task
+
+    leased = await asyncio.wait_for(waiter, timeout=1.0)
+    assert leased is page2
+    assert renderer._active_pages_count == 1
+    await renderer.close()
+
+
+async def test_cdp_close_disposes_owned_contexts():
+    from astrbot_plugin_vocabcard.core.image_renderer import ImageRenderer
+
+    renderer = ImageRenderer(
+        max_pages=2, engine="chromium", cdp_url="http://127.0.0.1:9222"
+    )
+    ctx = MagicMock()
+    ctx.close = AsyncMock()
+    renderer._browser = MagicMock()
+    renderer._owns_browser = False
+    renderer._owned_contexts.add(ctx)
+    renderer._loop = asyncio.get_running_loop()
+
+    await renderer.close()
+    ctx.close.assert_awaited_once()
+
+
+async def test_duplicate_keywords_all_reachable_in_classical_deck(tmp_path):
+    """古文卡组存在重复 keyword（如 7 个'公'），全部 27 句必须拥有独立进度键。"""
+    ctx = MagicMock()
+    config = MagicMock()
+    config.get = MagicMock(
+        side_effect=lambda key, default=None: {
+            "current_language": "classical",
+            "learning_mode": "sequential",
+            "reset_on_complete": False,
+            "target_groups": [],
+        }.get(key, default)
+    )
+    with patch("astrbot.api.star.StarTools") as _ms:
+        _ms.get_data_dir = MagicMock(return_value=str(tmp_path))
+        plugin = VocabCardPlugin(ctx, config)
+
+    assert len(plugin.words) == 27
+    keys = [plugin._word_key(w) for w in plugin.words]
+    assert len(set(keys)) == 27
+
+    picked = []
+    while True:
+        w = await plugin._select_word()
+        if w is None:
+            break
+        picked.append(plugin._word_key(w))
+        await plugin._mark_word_sent(plugin._word_key(w))
+
+    assert len(picked) == 27
+
+
+def test_word_datasets_have_no_raw_nbsp_or_anki_brackets():
+    import json
+    import pathlib
+
+    root = pathlib.Path(_plugin_dir) / "languages"
+    idioms = json.loads((root / "idiom" / "words.json").read_text(encoding="utf-8"))
+    assert not any("&nbsp;" in str(v) for item in idioms for v in item.values())
+    ja = json.loads((root / "japanese" / "words.json").read_text(encoding="utf-8"))
+    assert not any(
+        "[" in item.get("word", "")
+        or "]" in item.get("word", "")
+        or " " in item.get("word", "")
+        for item in ja
+    )
+
+
+async def test_schedule_next_target_wakes_at_midnight_after_daily_completion():
+    plugin = _make_plugin()
+    plugin._today_generated = True
+    plugin._today_pushed = True
+    tz = datetime.timezone(datetime.timedelta(hours=8))
+    now = datetime.datetime(2026, 6, 12, 8, 5, 0, tzinfo=tz)
+    nxt = plugin._calculate_next_target_time(now, (7, 30), (7, 0))
+    assert nxt == datetime.datetime(2026, 6, 13, 0, 0, 0, tzinfo=tz)
+
+
+async def test_persist_schedule_state_updates_stale_date_across_midnight(
+    tmp_path, monkeypatch
+):
+    import json
+
+    plugin = _make_plugin(data_dir=tmp_path)
+    plugin._last_check_date = "2000-01-01"
+    plugin._today_generated = True
+    plugin._today_pushed = True
+    await plugin._persist_schedule_state()
+
+    state = json.loads((tmp_path / "schedule_state.json").read_text(encoding="utf-8"))
+    assert state["date"] != "2000-01-01"
+    assert plugin._last_check_date == state["date"]
+
+
+async def test_delayed_vocab_test_does_not_mutate_configured_target_groups(tmp_path):
+    plugin = _make_plugin(data_dir=tmp_path)
+    targets = ["group-1"]
+    plugin.config.get = MagicMock(
+        side_effect=lambda key, default=None: (
+            targets if key == "target_groups" else default
+        )
+    )
+    img = tmp_path / "card.png"
+    img.write_bytes(b"png")
+    plugin._select_word = AsyncMock(
+        return_value=MagicMock(word="alpha", extra_fields={})
+    )
+    plugin._generate_card_image = AsyncMock(return_value=str(img))
+    plugin.context.send_message = AsyncMock(return_value=True)
+
+    event = MagicMock()
+    event.unified_msg_origin = "admin-private"
+
+    import astrbot_plugin_vocabcard.main as main_module
+
+    with patch.object(main_module.asyncio, "sleep", AsyncMock()):
+        async for _ in plugin.cmd_test_push(event, "5"):
+            pass
+        await asyncio.gather(*list(plugin._background_tasks))
+
+    plugin.config.__setitem__.assert_not_called()
+    sent_targets = [c.args[0] for c in plugin.context.send_message.await_args_list]
+    assert set(sent_targets) == {"group-1", "admin-private"}
+    assert plugin._today_generated is True
+    assert plugin._today_pushed is True
+
+
+async def test_switch_language_denies_non_admin():
+    plugin = _make_plugin()
+    event = MagicMock()
+    event.is_admin.return_value = False
+    outputs = []
+    event.plain_result = MagicMock(side_effect=lambda m: outputs.append(m))
+
+    async for _ in plugin.cmd_switch_language(event, "japanese"):
+        pass
+
+    assert plugin.current_language == "english"
+    assert any("管理员权限" in m for m in outputs)
+
+
 # ===== Regression tests for non-mutating previews and resumable pushes =====
+
 
 async def test_select_word_read_only_does_not_reset_completed_progress():
     plugin = _make_plugin()
@@ -905,7 +1196,9 @@ async def test_select_word_default_still_resets_completed_progress():
         ("cmd_test_push", ("0",)),
     ],
 )
-async def test_immediate_commands_select_words_without_progress_changes(method_name, args):
+async def test_immediate_commands_select_words_without_progress_changes(
+    method_name, args
+):
     plugin = _make_plugin()
     plugin._check_rate_limit = MagicMock(return_value=True)
     plugin._select_word = AsyncMock(return_value=None)
@@ -928,9 +1221,9 @@ async def test_partial_push_state_restores_and_retries_only_failed_target(tmp_pa
     plugin._cached_image_path = str(image_path)
     plugin._current_word = word
     plugin.config.get = MagicMock(
-        side_effect=lambda key, default=None: ["A", "B"]
-        if key == "target_groups"
-        else default
+        side_effect=lambda key, default=None: (
+            ["A", "B"] if key == "target_groups" else default
+        )
     )
 
     async def first_send(umo, chain):
@@ -948,15 +1241,17 @@ async def test_partial_push_state_restores_and_retries_only_failed_target(tmp_pa
 
     plugin2 = _make_plugin(data_dir=tmp_path, words=[word])
     plugin2.config.get = MagicMock(
-        side_effect=lambda key, default=None: ["A", "B"]
-        if key == "target_groups"
-        else default
+        side_effect=lambda key, default=None: (
+            ["A", "B"] if key == "target_groups" else default
+        )
     )
     plugin2.context.send_message = AsyncMock(return_value=True)
     second = await plugin2._push_daily_card()
 
     assert (second.attempted_count, second.success_count) == (1, 1)
-    assert [call.args[0] for call in plugin2.context.send_message.await_args_list] == ["B"]
+    assert [call.args[0] for call in plugin2.context.send_message.await_args_list] == [
+        "B"
+    ]
     assert plugin2.progress["sent_words"] == ["daily"]
     assert plugin2._cached_image_path is None
     assert plugin2._current_word is None
@@ -970,7 +1265,11 @@ async def test_partial_push_state_restores_and_retries_only_failed_target(tmp_pa
 async def test_restore_rejects_invalid_succeeded_umo_list(tmp_path):
     import json
 
-    today = __import__("astrbot_plugin_vocabcard.main", fromlist=["get_beijing_time"]).get_beijing_time().strftime("%Y-%m-%d")
+    today = (
+        __import__("astrbot_plugin_vocabcard.main", fromlist=["get_beijing_time"])
+        .get_beijing_time()
+        .strftime("%Y-%m-%d")
+    )
     (tmp_path / "schedule_state.json").write_text(
         json.dumps({"date": today, "push_succeeded_umos": ["A", 1]}),
         encoding="utf-8",
@@ -988,16 +1287,14 @@ async def test_partial_push_successes_accumulate_across_retries(tmp_path):
     plugin._cached_image_path = str(image_path)
     plugin._current_word = MagicMock(word="daily")
     plugin.config.get = MagicMock(
-        side_effect=lambda key, default=None: ["A", "B", "C"]
-        if key == "target_groups"
-        else default
+        side_effect=lambda key, default=None: (
+            ["A", "B", "C"] if key == "target_groups" else default
+        )
     )
     attempt_round = 0
 
     async def send(umo, chain):
-        if (attempt_round == 1 and umo == "A") or (
-            attempt_round == 2 and umo == "B"
-        ):
+        if (attempt_round == 1 and umo == "A") or (attempt_round == 2 and umo == "B"):
             return True
         raise RuntimeError("offline")
 
@@ -1019,9 +1316,9 @@ async def test_removed_failed_target_allows_existing_successes_to_complete(tmp_p
     plugin._current_word = MagicMock(word="daily")
     plugin._push_succeeded_umos = {"A"}
     plugin.config.get = MagicMock(
-        side_effect=lambda key, default=None: ["A"]
-        if key == "target_groups"
-        else default
+        side_effect=lambda key, default=None: (
+            ["A"] if key == "target_groups" else default
+        )
     )
     plugin.context.send_message = AsyncMock()
 

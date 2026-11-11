@@ -115,6 +115,15 @@ class BaseLanguageHandler(ABC):
         """
         return self.config.fonts
 
+    def get_safe_font(self, key: str, default: str = "sans-serif") -> str:
+        """Return a CSS-safe font-family declaration."""
+        raw = str(self.config.fonts.get(key, default) or default).strip()
+        if not raw or any(
+            ch in raw for ch in (";", "{", "}", "<", ">", "\\", "\r", "\n")
+        ):
+            return default
+        return raw
+
     def get_styles(self) -> Dict[str, Any]:
         """
         获取样式配置

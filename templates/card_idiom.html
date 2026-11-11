@@ -14,7 +14,7 @@
     body {
       width: 432px;
       height: 540px;
-      font-family: 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+      font-family: {{font_definition | safe}};
       overflow: hidden;
     }
 
@@ -30,7 +30,7 @@
     .bg-layer {
       position: absolute;
       inset: 0;
-      background-image: url('{{bg_url}}');
+      background-image: url("{{bg_url | safe}}");
       background-size: cover;
       background-position: {{bg_position}};
     }
@@ -63,10 +63,13 @@
     }
 
     .content {
-      position: absolute;
-      bottom: 36px;
-      left: 36px;
-      right: 36px;
+      position: relative;
+      width: 100%;
+      height: 100%;
+      padding: 28px 36px 36px;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
       color: white;
       z-index: 10;
     }
@@ -92,7 +95,7 @@
     }
 
     .word {
-      font-family: 'Noto Serif SC', serif;
+      font-family: {{font_word | safe}};
       font-size: {{word_size}};
       font-weight: 700;
       margin-bottom: 20px;

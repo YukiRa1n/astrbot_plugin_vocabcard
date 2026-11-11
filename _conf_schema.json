@@ -47,7 +47,7 @@
   "bg_load_timeout": {
     "description": "背景图加载等待时间",
     "type": "int",
-    "hint": "等待背景图 networkidle 的毫秒数，建议 3000-10000",
+    "hint": "等待背景图 networkidle 的毫秒数，范围 1000-60000，建议 3000-10000",
     "default": 5000
   },
   "default_bg_url": {
@@ -91,7 +91,7 @@
   "browser_max_pages": {
     "description": "最大并发渲染页面数",
     "type": "int",
-    "hint": "建议 1-2；更高并发会显著增加内存占用",
+    "hint": "范围 1-8，建议 1-2；更高并发会显著增加内存占用",
     "default": 2
   },
   "auto_install_browser": {

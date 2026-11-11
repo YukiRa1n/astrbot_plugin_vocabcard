@@ -165,7 +165,7 @@ pip install -r requirements.txt
 | `browser_engine` | `chromium` | 可选 `chromium`、`firefox`、`webkit` |
 | `browser_cdp_url` | 空 | 共享 Chromium 的 CDP 地址 |
 | `allow_remote_cdp` | `false` | 是否允许连接非本机 CDP 地址 |
-| `browser_max_pages` | `2` | 最大并发渲染页面数，最小值为 1 |
+| `browser_max_pages` | `2` | 最大并发渲染页面数，范围为 1–8 |
 | `auto_install_browser` | `false` | 浏览器缺失时是否允许运行时下载 |
 | `render_scale` | `3` | 渲染倍率，范围为 1–4 |
 
@@ -214,7 +214,7 @@ CDP 没有内置鉴权。不要将端口暴露到公网。只有在可信内网�
 插件将持久化文件保存到：
 
 ```text
-data/plugin_data/vocabcard/
+data/plugin_data/astrbot_plugin_vocabcard/
 ```
 
 主要文件如下：
@@ -224,7 +224,7 @@ progress_<卡组 ID>.json
 schedule_state.json
 ```
 
-- 每个卡组使用独立的进度文件。
+- 每个卡组使用独立的进度文件（升级时自动从旧目录 `data/plugin_data/vocabcard/` 迁移）。
 - 成功推送到全部当前目标会话后，插件才记录学习进度。
 - `/vocab`、`/vocab_preview` 和即时 `/vocab_test` 不记录进度。
 - 插件会保存当天的生成状态、推送状态和缓存卡片。
