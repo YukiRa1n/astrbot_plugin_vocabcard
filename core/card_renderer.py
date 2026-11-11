@@ -88,10 +88,16 @@ class CardRenderer:
             flags=_re.DOTALL,
         )
 
-        # 简单的占位符替换
+        # 简单的占位符替换（支持 {{key | safe}} 用于已清洗的 CSS 值）
         for key, value in variables.items():
+            raw_str = str(value)
+            html = _re.sub(
+                rf"\{{\{{\s*{_re.escape(key)}\s*\|\s*safe\s*\}}\}}",
+                lambda _m, s=raw_str: s,
+                html,
+            )
             placeholder = f"{{{{{key}}}}}"
-            html = html.replace(placeholder, _html.escape(str(value)))
+            html = html.replace(placeholder, _html.escape(raw_str))
 
         return html
 
@@ -101,5 +107,7 @@ class CardRenderer:
             return
 
         self.env.filters["upper"] = lambda x: x.upper() if x else ""
-        self.env.filters["truncate"] = lambda x, n=255: (x[:n] + "..." if x and len(x) > n else (x or ""))
+        self.env.filters["truncate"] = lambda x, n=255: (
+            x[:n] + "..." if x and len(x) > n else (x or "")
+        )
         self.env.filters["default"] = lambda x, d: x if x else d

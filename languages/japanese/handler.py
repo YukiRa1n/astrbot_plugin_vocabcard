@@ -108,10 +108,10 @@ class JapaneseLanguageHandler(BaseLanguageHandler):
             "theme_color": kwargs.get("theme_color", "#8B4513"),
             "bg_position": kwargs.get("bg_position", "50% 50%"),
             # 字体配置
-            "font_word": self.config.fonts.get("word", "serif"),
-            "font_phonetic": self.config.fonts.get("phonetic", "sans-serif"),
-            "font_definition": self.config.fonts.get("definition", "sans-serif"),
-            "font_example": self.config.fonts.get("example", "serif"),
+            "font_word": self.get_safe_font("word", "serif"),
+            "font_phonetic": self.get_safe_font("phonetic", "sans-serif"),
+            "font_definition": self.get_safe_font("definition", "sans-serif"),
+            "font_example": self.get_safe_font("example", "serif"),
             # 样式配置
             "word_size": self.config.styles.get("word_size", "48px"),
             "word_letter_spacing": self.config.styles.get(

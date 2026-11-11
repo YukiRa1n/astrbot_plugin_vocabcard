@@ -67,7 +67,11 @@ MAX_TEST_DELAY_SECONDS = 300
 # 十六进制颜色正则，用于校验 theme_color（防止 CSS 注入）
 _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?$")
 # 允许注入 CSS 的 URL scheme（防御 CSS 上下文注入）
-_CSS_URL_SCHEMES = frozenset({"http", "https", "file", "data"})
+_CSS_URL_SCHEMES = frozenset({"http", "https", "file"})
+_SAFE_DATA_IMAGE_RE = re.compile(
+    r"^data:image/[a-zA-Z0-9.+-]+(?:;base64)?,[A-Za-z0-9+/=%._~:-]+$",
+    re.IGNORECASE,
+)
 
 # 公共渲染命令限流：每用户 30 秒 1 次（重型浏览器渲染，防止刷屏 DoS）
 _RATE_LIMIT_WINDOW = 30
@@ -138,9 +142,9 @@ NO_TARGET_RECHECK_SECONDS = 60
 
 
 @register(
-    "vocabcard",
+    "astrbot_plugin_vocabcard",
     "YukiRa1n",
-    "每日多语种单词卡片推送插件 - 支持英语/日语",
+    "每日定时推送玻璃拟态风格的多语种学习卡片",
     "2.0.0",
 )
 class VocabCardPlugin(Star):
@@ -187,6 +191,7 @@ class VocabCardPlugin(Star):
 
         # 定时任务相关（会从磁盘恢复）
         self._scheduler_task: Optional[asyncio.Task] = None
+        self._schedule_wakeup = asyncio.Event()
         self._cached_image_path: Optional[str] = None
         self._current_word: Optional[WordEntry] = None
         self._today_generated: bool = False
@@ -194,6 +199,8 @@ class VocabCardPlugin(Star):
         self._last_check_date: str = ""
         self._scheduler_consecutive_failures = 0
         self._no_target_notice_date: str = ""
+        # 部分推送失败时记录已成功目标，重试时跳过
+        self._push_succeeded_umos: set[str] = set()
         self._restore_schedule_state()
 
         # 进度文件保存锁（防止并发写入冲突）
@@ -205,9 +212,6 @@ class VocabCardPlugin(Star):
 
         # 后台任务集合（延迟推送、图片清理等），terminate 时统一取消
         self._background_tasks: set[asyncio.Task] = set()
-
-        # 部分推送失败时记录已成功目标，重试时跳过
-        self._push_succeeded_umos: set[str] = set()
 
         browser_engine = str(self.config.get("browser_engine", "chromium")).strip()
         if browser_engine not in {"chromium", "firefox", "webkit"}:
@@ -248,28 +252,59 @@ class VocabCardPlugin(Star):
         try:
             from astrbot.api.star import StarTools
 
-            data_dir = Path(StarTools.get_data_dir("vocabcard"))
+            data_dir = Path(StarTools.get_data_dir("astrbot_plugin_vocabcard"))
             data_dir.mkdir(parents=True, exist_ok=True)
-            # One-time migration from bundled data/ if empty
-            legacy = self.plugin_dir / "data"
-            if legacy.exists():
-                for name in ("progress_english.json", "schedule_state.json"):
-                    src = legacy / name
-                    dst = data_dir / name
-                    if src.exists() and not dst.exists():
+            # Migrate from legacy "vocabcard" plugin_data dir and bundled data/
+            legacy_dirs = [
+                data_dir.parent / "vocabcard",
+                self.plugin_dir / "data",
+            ]
+            for legacy in legacy_dirs:
+                if not legacy.exists() or legacy.resolve() == data_dir.resolve():
+                    continue
+                candidates = list(legacy.glob("progress_*.json"))
+                for name in ("progress.json", "schedule_state.json"):
+                    extra = legacy / name
+                    if extra.exists():
+                        candidates.append(extra)
+                for src in candidates:
+                    dst = data_dir / src.name
+                    if src.is_file() and not dst.exists():
                         try:
                             import shutil
 
                             shutil.copy2(src, dst)
-                            logger.info(f"Migrated {name} to plugin data dir")
+                            logger.info(f"Migrated {src.name} to plugin data dir")
                         except OSError as e:
-                            logger.warning(f"Failed to migrate {name}: {e}")
+                            logger.warning(f"Failed to migrate {src.name}: {e}")
             return data_dir
         except Exception as e:
             logger.debug(f"StarTools.get_data_dir unavailable, using local data/: {e}")
             local = self.plugin_dir / "data"
             local.mkdir(parents=True, exist_ok=True)
             return local
+
+    def _remove_cached_file(self, candidate: Optional[str]) -> None:
+        """Delete a plugin-owned cached image inside data_dir."""
+        if not candidate or not isinstance(candidate, str):
+            return
+        if not self._path_within_data_dir(candidate):
+            return
+        try:
+            if os.path.isfile(candidate):
+                os.remove(candidate)
+        except OSError as e:
+            logger.warning(f"清理缓存图片失败: {e}")
+
+    @staticmethod
+    def _word_key(word: WordEntry) -> str:
+        """Return the unique progress key for a word entry."""
+        extra = getattr(word, "extra_fields", None)
+        if isinstance(extra, dict):
+            key = extra.get("progress_key")
+            if isinstance(key, str) and key:
+                return key
+        return word.word
 
     def _path_within_data_dir(self, candidate: str) -> bool:
         """检查候选路径是否位于 data_dir 内（防篡改 state 指向任意文件）。
@@ -300,16 +335,21 @@ class VocabCardPlugin(Star):
             return
 
         if not isinstance(state, dict):
-            logger.warning(f"schedule_state.json 类型错误（期望 dict，得到 {type(state).__name__}），使用默认状态")
+            logger.warning(
+                f"schedule_state.json 类型错误（期望 dict，得到 {type(state).__name__}），使用默认状态"
+            )
             return
 
         today = get_beijing_time().strftime("%Y-%m-%d")
+        cached = state.get("cached_image_path") or ""
         if state.get("date") != today:
+            self._remove_cached_file(cached)
             return
 
         # 持久化的语种与当前配置不一致时（管理员改配置切语种），
         # 放弃恢复当日状态，避免复用旧语种的缓存图片和进度。
         if state.get("language") and state.get("language") != self.current_language:
+            self._remove_cached_file(cached)
             logger.info(
                 "持久化语种 %s 与当前 %s 不一致，跳过当日状态恢复",
                 state.get("language"),
@@ -320,7 +360,15 @@ class VocabCardPlugin(Star):
         self._last_check_date = today
         self._today_generated = _safe_bool(state.get("today_generated", False))
         self._today_pushed = _safe_bool(state.get("today_pushed", False))
-        cached = state.get("cached_image_path") or ""
+        succeeded_umos = state.get("push_succeeded_umos", [])
+        if isinstance(succeeded_umos, list) and all(
+            isinstance(umo, str) for umo in succeeded_umos
+        ):
+            self._push_succeeded_umos = set(succeeded_umos)
+        else:
+            logger.warning(
+                "schedule_state.json 中的 push_succeeded_umos 类型错误，忽略"
+            )
         # 安全边界：cached_image_path 来自本地 schedule_state.json，
         # 若被篡改可能指向任意文件；后续推送会读取/发送/删除它。
         # 只信任位于 data_dir 内的常规文件路径。
@@ -332,7 +380,12 @@ class VocabCardPlugin(Star):
         word_text = state.get("current_word") or ""
         if word_text:
             self._current_word = next(
-                (w for w in self.words if w.word == word_text), None
+                (
+                    w
+                    for w in self.words
+                    if self._word_key(w) == word_text or w.word == word_text
+                ),
+                None,
             )
         logger.info(
             "Restored schedule state: generated=%s pushed=%s cache=%s",
@@ -353,13 +406,17 @@ class VocabCardPlugin(Star):
     async def _persist_schedule_state_unlocked(self) -> None:
         """写入逻辑；调用者必须持有 _progress_lock。"""
         path = self._schedule_state_path()
+        today = get_beijing_time().strftime("%Y-%m-%d")
+        self._last_check_date = today
         state = {
-            "date": self._last_check_date
-            or get_beijing_time().strftime("%Y-%m-%d"),
+            "date": today,
             "today_generated": self._today_generated,
             "today_pushed": self._today_pushed,
             "cached_image_path": self._cached_image_path or "",
-            "current_word": self._current_word.word if self._current_word else "",
+            "current_word": (
+                self._word_key(self._current_word) if self._current_word else ""
+            ),
+            "push_succeeded_umos": sorted(self._push_succeeded_umos),
             "language": self.current_language,
         }
         try:
@@ -410,24 +467,49 @@ class VocabCardPlugin(Star):
     def _get_offline_background_url(self) -> str:
         """获取一张离线背景图的 file:// URL"""
         if not self.offline_backgrounds:
-            # 没有离线图，返回纯色背景的 data URL
-            return "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1080' height='1350'%3E%3Crect fill='%231a1a2e' width='100%25' height='100%25'/%3E%3C/svg%3E"
+            # 没有离线图，返回无裸引号/井号截断风险的纯色背景 data URL
+            return (
+                "data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27"
+                "%20width=%271080%27%20height=%271350%27%3E%3Crect%20fill=%27%231a1a2e%27"
+                "%20width=%27100%25%27%20height=%27100%25%27/%3E%3C/svg%3E"
+            )
 
         bg_path = random.choice(self.offline_backgrounds)
         # 返回 file:// URL（as_uri 会做百分号编码，正确处理空格/#/% 等字符）
         return bg_path.as_uri()
 
     def _load_words(self) -> List[WordEntry]:
-        """加载词汇数据"""
+        """加载词汇数据并为同形/重复关键字词条分配稳定唯一键"""
         try:
-            # 日语卡组支持等级筛选
             if self.current_language == "japanese":
                 level_filter = self.config.get("japanese_level", "all")
-                return self.current_handler.load_words(level_filter=level_filter)
-            return self.current_handler.load_words()
+                words = self.current_handler.load_words(level_filter=level_filter)
+            else:
+                words = self.current_handler.load_words()
         except Exception as e:
             logger.error(f"加载词汇数据失败: {e}")
             return []
+
+        counts = collections.Counter(w.word for w in words)
+        seen: Dict[str, int] = collections.defaultdict(int)
+        used_keys: set[str] = set()
+        for entry in words:
+            idx = seen[entry.word]
+            seen[entry.word] += 1
+            if counts[entry.word] <= 1 or idx == 0:
+                used_keys.add(entry.word)
+                continue
+            extra = entry.extra_fields if isinstance(entry.extra_fields, dict) else {}
+            entry.extra_fields = extra
+            suffix = str(
+                extra.get("sentence_num") or entry.phonetic or (idx + 1)
+            ).strip()
+            candidate = f"{entry.word}#{suffix}"
+            if candidate in used_keys:
+                candidate = f"{entry.word}#{idx + 1}"
+            used_keys.add(candidate)
+            extra["progress_key"] = candidate
+        return words
 
     def _load_progress(self) -> Dict:
         """加载学习进度（语种特定，支持旧数据迁移）"""
@@ -451,7 +533,13 @@ class VocabCardPlugin(Star):
         if progress_file.exists():
             try:
                 with open(progress_file, "r", encoding="utf-8") as f:
-                    return json.load(f)
+                    data = json.load(f)
+                if isinstance(data, dict) and isinstance(data.get("sent_words"), list):
+                    data["sent_words"] = [str(w) for w in data["sent_words"]]
+                    if not isinstance(data.get("last_push_date"), str):
+                        data["last_push_date"] = ""
+                    return data
+                logger.warning(f"进度文件结构异常，使用默认进度: {progress_file}")
             except Exception as e:
                 logger.error(f"加载进度数据失败: {e}")
 
@@ -470,9 +558,7 @@ class VocabCardPlugin(Star):
 
             tmp_file = progress_file.with_suffix(".json.tmp")
             async with aiofiles.open(tmp_file, "w", encoding="utf-8") as f:
-                await f.write(
-                    json.dumps(self.progress, ensure_ascii=False, indent=2)
-                )
+                await f.write(json.dumps(self.progress, ensure_ascii=False, indent=2))
             os.replace(tmp_file, progress_file)
         except ImportError:
             await asyncio.get_running_loop().run_in_executor(
@@ -510,12 +596,38 @@ class VocabCardPlugin(Star):
                 except Exception as e:
                     logger.error(f"Failed to create progress file: {e}")
 
+        # 清理上次未及时回收的过期临时图片（保留今日待推送缓存图）
+        cutoff = time.time() - 3600
+        for stale in self.data_dir.glob("card_*.png"):
+            try:
+                if (
+                    self._cached_image_path
+                    and stale.resolve() == Path(self._cached_image_path).resolve()
+                ):
+                    continue
+                if stale.is_file() and stale.stat().st_mtime < cutoff:
+                    stale.unlink(missing_ok=True)
+            except OSError:
+                continue
+
         self._scheduler_task = asyncio.create_task(self._schedule_loop())
         logger.info("单词卡片定时任务已启动")
 
         logger.info(
             f"VocabCard plugin initialized [language: {self.current_language}], loaded {len(self.words)} words"
         )
+
+    async def _sleep_interruptible(self, seconds: float) -> None:
+        """Sleep up to ``seconds`` or wake early when schedule configuration changes."""
+        if seconds <= 0:
+            self._schedule_wakeup.clear()
+            return
+        try:
+            await asyncio.wait_for(self._schedule_wakeup.wait(), timeout=seconds)
+        except asyncio.TimeoutError:
+            pass
+        finally:
+            self._schedule_wakeup.clear()
 
     async def _schedule_loop(self):
         """定时任务主循环 - 智能睡眠，精准触发"""
@@ -530,12 +642,14 @@ class VocabCardPlugin(Star):
                 )
                 push_time = self._parse_time(self.config.get("push_time_send", "08:00"))
 
-                # 每天0点重置标记与失败计数
+                # 每天0点重置标记与失败计数，并清理昨日未发出的缓存图
                 if self._last_check_date != today_str:
+                    self._remove_cached_file(self._cached_image_path)
                     self._today_generated = False
                     self._today_pushed = False
                     self._cached_image_path = None
                     self._current_word = None
+                    self._push_succeeded_umos = set()
                     self._last_check_date = today_str
                     self._scheduler_consecutive_failures = 0
                     await self._persist_schedule_state()
@@ -552,24 +666,48 @@ class VocabCardPlugin(Star):
                         logger.debug(
                             f"距离下次任务还有 {sleep_seconds:.0f} 秒，先睡眠 {sleep_until:.0f} 秒"
                         )
-                        await asyncio.sleep(sleep_until)
+                        await self._sleep_interruptible(sleep_until)
                         continue
 
                     # 距离目标时间很近了，精确等待
                     if sleep_seconds > 0:
                         logger.debug(f"即将执行任务，精确等待 {sleep_seconds:.1f} 秒")
-                        await asyncio.sleep(sleep_seconds)
+                        await self._sleep_interruptible(sleep_seconds)
 
-                # 重新获取当前时间（睡眠后）
+                # 重新获取当前时间（睡眠后可能被语种切换唤醒或已跨天）
                 now = get_beijing_time()
+                if now.strftime("%Y-%m-%d") != today_str:
+                    continue
 
                 # 若已过生成时间且今日尚未生成（含重启补跑），立即生成
                 gen_passed = self._time_reached(now, gen_time)
                 push_passed = self._time_reached(now, push_time)
 
                 if not self._today_generated and gen_passed:
+                    if not self.words:
+                        logger.info(
+                            "当前卡组 '%s' 没有可用词条，今日跳过定时推送",
+                            self.current_language,
+                        )
+                        self._today_generated = True
+                        self._today_pushed = True
+                        await self._persist_schedule_state()
+                        continue
                     logger.info("开始生成每日单词卡片...")
                     async with self._workflow_lock:
+                        exhausted = not _safe_bool(
+                            self.config.get("reset_on_complete", True)
+                        ) and all(
+                            self._word_key(w)
+                            in set(self.progress.get("sent_words", []))
+                            for w in self.words
+                        )
+                        if exhausted:
+                            logger.info("所有词条已推送完毕且未开启自动重置，今日跳过")
+                            self._today_generated = True
+                            self._today_pushed = True
+                            await self._persist_schedule_state()
+                            continue
                         self._today_generated = await self._generate_daily_card()
                         await self._persist_schedule_state()
                     if not self._today_generated:
@@ -577,11 +715,19 @@ class VocabCardPlugin(Star):
 
                 # 推送：到达推送时间且尚未推送
                 if push_passed and not self._today_pushed:
-                    # 缓存丢失时在推送窗口补生成
-                    if not (
-                        self._cached_image_path
-                        and os.path.exists(self._cached_image_path)
+                    # 缓存丢失且本轮未刚刚生成失败时才补生成，避免单轮双倍失败计数
+                    if (
+                        not (
+                            self._cached_image_path
+                            and os.path.exists(self._cached_image_path)
+                        )
+                        and self._scheduler_consecutive_failures == 0
                     ):
+                        if not self.words:
+                            self._today_generated = True
+                            self._today_pushed = True
+                            await self._persist_schedule_state()
+                            continue
                         logger.info("缓存卡片缺失，推送前补生成...")
                         async with self._workflow_lock:
                             self._today_generated = await self._generate_daily_card()
@@ -598,9 +744,6 @@ class VocabCardPlugin(Star):
                         if result.no_targets:
                             await self._wait_for_push_targets(today_str)
                             continue
-                        # 仅全部目标成功才算"今日已推送"；部分失败时保留
-                        # 缓存并在后续窗口重试失败目标（_push_daily_card 在
-                        # 部分失败时不提交进度、不删图）。
                         all_succeeded = (
                             result.attempted_count > 0
                             and result.success_count == result.attempted_count
@@ -610,7 +753,6 @@ class VocabCardPlugin(Star):
                         if self._today_pushed:
                             self._scheduler_consecutive_failures = 0
                         else:
-                            # 推送失败也累加失败计数，触发指数退避，避免 10 秒热循环
                             self._scheduler_consecutive_failures += 1
 
                 # 连续失败时指数退避，避免热循环刷日志/反复渲染
@@ -619,40 +761,43 @@ class VocabCardPlugin(Star):
                         300, 10 * (2 ** (self._scheduler_consecutive_failures - 1))
                     )
                     if self._scheduler_consecutive_failures >= 8:
-                        # 连续失败 8 次（约 25 分钟）后当日放弃，明日 0 点重置
                         logger.warning(
                             "定时任务连续失败 %d 次，当日放弃重试，明日 0 点重置",
                             self._scheduler_consecutive_failures,
                         )
+                        self._remove_cached_file(self._cached_image_path)
+                        self._cached_image_path = None
+                        self._current_word = None
                         self._today_generated = True
                         self._today_pushed = True
                         await self._persist_schedule_state()
-                        await asyncio.sleep(3600)
+                        await self._sleep_interruptible(3600)
                         continue
                     logger.warning(
                         "定时任务连续失败 %d 次，退避 %ds 后重试",
                         self._scheduler_consecutive_failures,
                         backoff,
                     )
-                    await asyncio.sleep(backoff)
+                    await self._sleep_interruptible(backoff)
                     continue
 
                 # Wait before next check
-                await asyncio.sleep(10)
+                await self._sleep_interruptible(10)
 
             except Exception as e:
                 logger.error(f"定时任务出错: {e}")
                 self._scheduler_consecutive_failures += 1
-                # 出错后指数退避重试（60s -> 120s -> ...），上限 300s
                 backoff = min(
                     300, 60 * (2 ** (self._scheduler_consecutive_failures - 1))
                 )
-                await asyncio.sleep(backoff)
+                await self._sleep_interruptible(backoff)
 
     def _parse_time(self, time_str) -> tuple:
         """Parse time string HH:MM with validation"""
         if not isinstance(time_str, str):
-            logger.warning(f"Time format invalid type '{type(time_str).__name__}': {time_str}, using default 08:00")
+            logger.warning(
+                f"Time format invalid type '{type(time_str).__name__}': {time_str}, using default 08:00"
+            )
             return (8, 0)
         try:
             parts = time_str.split(":")
@@ -661,10 +806,14 @@ class VocabCardPlugin(Star):
                 raise ValueError(f"Time out of range: {hour}:{minute}")
             return (hour, minute)
         except (ValueError, IndexError) as e:
-            logger.warning(f"Time format parse failed '{time_str}': {e}, using default 08:00")
+            logger.warning(
+                f"Time format parse failed '{time_str}': {e}, using default 08:00"
+            )
             return (8, 0)
 
-    def _is_within_minute_window(self, now: datetime.datetime, target_time: tuple) -> bool:
+    def _is_within_minute_window(
+        self, now: datetime.datetime, target_time: tuple
+    ) -> bool:
         """Check if current time is within the target minute window (tolerance: 60s)"""
         target_hour, target_minute = target_time
         return now.hour == target_hour and now.minute == target_minute
@@ -710,33 +859,50 @@ class VocabCardPlugin(Star):
                 logger.info("推送时间已过但未完成，立即补跑")
                 return now
 
-        # 如果今天的任务都完成了，计算明天的第一个任务（生成时间）
+        # 如果今天的任务都完成了，睡到次日 00:00 触发跨天重置，再计算次日最早任务
         if not targets:
             tomorrow = today + datetime.timedelta(days=1)
-            next_gen = datetime.datetime.combine(
-                tomorrow, datetime.time(gen_time[0], gen_time[1]), tzinfo=tz
+            next_midnight = datetime.datetime.combine(
+                tomorrow, datetime.time(0, 0), tzinfo=tz
             )
-            targets.append(next_gen)
+            targets.append(next_midnight)
 
         # 返回最近的目标时间
         return min(targets) if targets else None
 
-    async def _select_word(self) -> Optional[WordEntry]:
-        """选择一个未推送过的单词"""
+    async def _select_word(self, update_progress: bool = True) -> Optional[WordEntry]:
+        """Select an unsent word.
+
+        Args:
+            update_progress: Whether an exhausted deck may reset and save progress.
+        """
         if not self.words:
             return None
 
         sent_words = set(self.progress.get("sent_words", []))
-        available = [w for w in self.words if w.word not in sent_words]
+        available = [w for w in self.words if self._word_key(w) not in sent_words]
 
         # 如果全部推送完毕
         if not available:
             if _safe_bool(self.config.get("reset_on_complete", True)):
-                # 重置进度
-                self.progress["sent_words"] = []
-                await self._save_progress()
+                if update_progress:
+                    current_keys = {self._word_key(w) for w in self.words}
+                    if (
+                        self.current_language == "japanese"
+                        and self.config.get("japanese_level", "all") != "all"
+                    ):
+                        # 仅清空当前筛选等级的进度，保留其他 JLPT 等级的已学记录
+                        remaining = [
+                            k
+                            for k in self.progress.get("sent_words", [])
+                            if k not in current_keys
+                        ]
+                    else:
+                        remaining = []
+                    self.progress["sent_words"] = remaining
+                    await self._save_progress()
+                    logger.info("所有单词已推送完毕，已重置进度")
                 available = self.words
-                logger.info("所有单词已推送完毕，已重置进度")
             else:
                 logger.warning("所有单词已推送完毕，且未开启自动重置")
                 return None
@@ -771,35 +937,40 @@ class VocabCardPlugin(Star):
         else:
             theme = "aesthetic minimalist background"
 
-        # 构建提示词
+        # 构建提示词（编码斜杠等全部特殊字符，避免破坏路径层级）
         prompt = f"{word_text} concept, {theme}, high quality, 4k, no text, cinematic lighting"
-        return urllib.parse.quote(prompt)
+        return urllib.parse.quote(prompt, safe="")
 
     @staticmethod
     def _sanitize_css_url(value: str) -> str:
-        """Defense-in-depth: 校验进入 CSS url(...) 上下文的 URL。
+        """校验进入 <style> url("...") 上下文的背景 URL。
 
-        Jinja2 的 HTML 实体转义在浏览器解析 CSS 前会被解码回原始字符，
-        因此 url('{{bg_url}}') 中的引号/分号可被用于闭合注入任意 CSS。
-        此处白名单 scheme 并剥离引号/分号/括号，作为纵深防御。
+        <style> 为 HTML RAWTEXT 元素，浏览器不会解码 HTML 实体，因此模板中
+        对已通过本函数校验的 URL 使用 ``| safe`` 输出，并在此处严格要求合法协议、
+        禁止协议相对 UNC 路径 ``//``，剥离一切可闭合字符串或逃逸 CSS 的字符。
         """
         value = (value or "").strip()
         if not value:
-            return value
+            return ""
+        if value.startswith("//"):
+            return ""
         if value.lower().startswith("data:"):
-            # data: 只允许 image 类型（大小写不敏感）。
-            # 不剥离分号：base64 数据需要分号（data:image/png;base64,...），
-            # 且 data URL 内不含可闭合 url() 的引号/括号场景。
-            if not value.lower().startswith("data:image/"):
-                return ""
-            return value
-        # 去除可能闭合 url(...) 的字符（非 data URL）
-        cleaned = value.replace("'", "").replace('"', "")
-        cleaned = cleaned.replace(";", "").replace(")", "")
-        if "://" in cleaned:
-            scheme = cleaned.split("://", 1)[0].lower()
-            if scheme not in _CSS_URL_SCHEMES:
-                return ""
+            return value if _SAFE_DATA_IMAGE_RE.fullmatch(value) else ""
+        cleaned = "".join(
+            ch
+            for ch in value
+            if ord(ch) >= 0x20
+            and ord(ch) != 0x7F
+            and ch not in {"'", '"', ";", "(", ")", "{", "}", "\\", "<", ">"}
+        )
+        parsed = urllib.parse.urlsplit(cleaned)
+        scheme = parsed.scheme.lower()
+        if scheme not in _CSS_URL_SCHEMES:
+            return ""
+        if scheme == "file" and parsed.netloc.lower() not in {"", "localhost"}:
+            return ""
+        if scheme in {"http", "https"} and not parsed.netloc:
+            return ""
         return cleaned
 
     @staticmethod
@@ -832,12 +1003,16 @@ class VocabCardPlugin(Star):
         safe_name = hashlib.md5(word.word.encode()).hexdigest()[:12]
         output_png = self.data_dir / f"card_{safe_name}_{uuid.uuid4().hex[:8]}.png"
 
+        card_size = getattr(self.current_handler.config, "card_size", (432, 540))
+        width = _safe_int(card_size[0], 432) if len(card_size) >= 2 else 432
+        height = _safe_int(card_size[1], 540) if len(card_size) >= 2 else 540
+
         try:
             await self._image_renderer.render_to_file(
                 html_content=html_content,
                 output_path=str(output_png),
-                width=432,
-                height=540,
+                width=width,
+                height=height,
                 scale=self._render_scale,
                 network_idle_timeout_ms=self._bg_load_timeout,
             )
@@ -864,7 +1039,8 @@ class VocabCardPlugin(Star):
         # 全局淘汰：定期清理过期 sender 条目，防止唯一用户字典无界增长
         if len(self._rate_limit) > 1000:
             expired = [
-                k for k, v in self._rate_limit.items()
+                k
+                for k, v in self._rate_limit.items()
                 if not v or now - v[-1] > _RATE_LIMIT_WINDOW
             ]
             for k in expired:
@@ -909,7 +1085,9 @@ class VocabCardPlugin(Star):
                 logger.warning(f"清理临时图片失败: {e}")
 
         try:
-            loop.create_task(_cleanup())
+            task = loop.create_task(_cleanup())
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
         except RuntimeError:
             # 事件循环关闭时放弃延迟清理
             try:
@@ -928,13 +1106,11 @@ class VocabCardPlugin(Star):
         try:
             image_path = await self._generate_card_image(word)
             old_path = self._cached_image_path
-            if old_path and old_path != image_path and os.path.exists(old_path):
-                try:
-                    os.remove(old_path)
-                except OSError as e:
-                    logger.warning(f"清理旧缓存图片失败: {e}")
+            if old_path and old_path != image_path:
+                self._remove_cached_file(old_path)
             self._cached_image_path = image_path
             self._current_word = word
+            self._push_succeeded_umos = set()
             await self._persist_schedule_state()
             logger.info(f"已生成每日单词卡片: {word.word}")
             return True
@@ -957,33 +1133,44 @@ class VocabCardPlugin(Star):
             if get_beijing_time().strftime("%Y-%m-%d") != today_str:
                 return
 
-    async def _push_daily_card(self) -> PushResult:
+    async def _push_daily_card(
+        self, extra_targets: Optional[List[str]] = None
+    ) -> PushResult:
         """推送卡片到已注册的群聊"""
         if not self._cached_image_path or not os.path.exists(self._cached_image_path):
             logger.warning("没有已生成的卡片可推送")
             return PushResult(attempted_count=0, success_count=0)
 
-        target_groups = self.config.get("target_groups", [])
+        configured = list(self.config.get("target_groups", []) or [])
+        if extra_targets:
+            for extra in extra_targets:
+                if extra and extra not in configured:
+                    configured.append(extra)
+        target_groups = list(dict.fromkeys(configured))
         if not target_groups:
             logger.debug("没有已注册的推送目标")
             return PushResult(attempted_count=0, success_count=0, no_targets=True)
 
         # 部分失败重试时，跳过已成功目标
-        skip = getattr(self, "_push_succeeded_umos", set())
+        skip = self._push_succeeded_umos
+        all_previously_succeeded = False
         if skip:
             remaining = [umo for umo in target_groups if umo not in skip]
             if not remaining:
-                logger.info("所有目标均已成功推送，无需重试")
-                return PushResult(attempted_count=0, success_count=0)
-            logger.info(f"跳过 {len(skip)} 个已成功目标，重试剩余 {len(remaining)} 个")
-            target_groups = remaining
+                logger.info("所有当前目标均已成功推送，复用完成流程")
+                all_previously_succeeded = True
+            else:
+                logger.info(
+                    f"跳过 {len(skip)} 个已成功目标，重试剩余 {len(remaining)} 个"
+                )
+                target_groups = remaining
 
-        success_count = 0
+        success_count = len(target_groups) if all_previously_succeeded else 0
         word_text = self._current_word.word if self._current_word else "单词"
 
         # 记录本次推送成功的目标，用于部分失败时只重试失败目标
         succeeded_umos: set[str] = set()
-        for umo in target_groups:
+        for umo in [] if all_previously_succeeded else target_groups:
             try:
                 # 构建消息链
                 chain = MessageChain()
@@ -991,8 +1178,6 @@ class VocabCardPlugin(Star):
                 chain.file_image(self._cached_image_path)
 
                 sent = await self.context.send_message(umo, chain)
-                # send_message 返回 False 表示平台未找到该会话/发送失败，
-                # 不应计为成功（否则目标失效时仍会提交进度并删图）。
                 if sent is False:
                     logger.warning(f"推送到 {umo} 失败：平台返回 False")
                     continue
@@ -1008,7 +1193,7 @@ class VocabCardPlugin(Star):
         # 且记录已成功目标，后续重试只发送给失败目标。
         if success_count == len(target_groups) and success_count > 0:
             if self._current_word is not None:
-                await self._mark_word_sent(self._current_word.word)
+                await self._mark_word_sent(self._word_key(self._current_word))
             try:
                 if os.path.exists(self._cached_image_path):
                     os.remove(self._cached_image_path)
@@ -1019,8 +1204,8 @@ class VocabCardPlugin(Star):
             self._push_succeeded_umos = set()
             await self._persist_schedule_state()
         elif success_count > 0:
-            # 部分失败：记录已成功目标，重试时跳过
-            self._push_succeeded_umos = succeeded_umos
+            self._push_succeeded_umos.update(succeeded_umos)
+            await self._persist_schedule_state()
             logger.warning(
                 f"部分目标推送失败（{success_count}/{len(target_groups)}），"
                 "保留缓存供后续重试"
@@ -1039,17 +1224,15 @@ class VocabCardPlugin(Star):
         if not self._check_rate_limit(event):
             yield event.plain_result(_RATE_LIMIT_MSG)
             return
-        word = await self._select_word()
-        if not word:
-            yield event.plain_result("没有可用的单词数据")
-            return
 
-        # 静默生成，不发送提示
         try:
-            image_path = await self._generate_card_image(word)
+            async with self._workflow_lock:
+                word = await self._select_word(update_progress=False)
+                if not word:
+                    yield event.plain_result("没有可用的单词数据")
+                    return
+                image_path = await self._generate_card_image(word)
             yield event.image_result(image_path)
-
-            # 延迟清理图片，避免与平台异步上传产生竞态
             self._schedule_image_cleanup(image_path)
         except Exception as e:
             logger.error(f"生成卡片失败: {e}\n{traceback.format_exc()}")
@@ -1059,7 +1242,8 @@ class VocabCardPlugin(Star):
     async def cmd_status(self, event: AstrMessageEvent):
         """查看学习进度"""
         total = len(self.words)
-        sent = len(self.progress.get("sent_words", []))
+        sent_set = set(self.progress.get("sent_words", []))
+        sent = sum(1 for w in self.words if self._word_key(w) in sent_set)
         percent = sent * 100 // total if total > 0 else 0
         last_date = self.progress.get("last_push_date", "未知")
         push_time = self.config.get("push_time_send", "08:00")
@@ -1123,7 +1307,11 @@ class VocabCardPlugin(Star):
         """
         # 参数解析 + 上限（安全整数转换，兼容 Unicode 数字和 null）
         try:
-            delay = int(delay_seconds) if isinstance(delay_seconds, (str, int, float)) else 0
+            delay = (
+                int(delay_seconds)
+                if isinstance(delay_seconds, (str, int, float))
+                else 0
+            )
             if delay < 0:
                 delay = 0
         except (ValueError, TypeError):
@@ -1137,13 +1325,12 @@ class VocabCardPlugin(Star):
         # 快速测试模式（delay=0）
         if delay == 0:
             try:
-                # 生成卡片（静默）
-                word = await self._select_word()
-                if not word:
-                    yield event.plain_result("没有可用的单词")
-                    return
-
-                image_path = await self._generate_card_image(word)
+                async with self._workflow_lock:
+                    word = await self._select_word(update_progress=False)
+                    if not word:
+                        yield event.plain_result("没有可用的单词")
+                        return
+                    image_path = await self._generate_card_image(word)
 
                 # 发送到当前会话
                 yield event.plain_result(f"📚 测试单词: {word.word}")
@@ -1156,70 +1343,62 @@ class VocabCardPlugin(Star):
                 logger.error(f"测试推送失败: {e}\n{traceback.format_exc()}")
                 yield event.plain_result(f"❌ 测试失败: {e}")
 
-        # 完整定时测试模式（delay>0）
+        # 完整定时测试模式（delay>0）：只向本次推送传入当前会话作为附加目标，
+        # 不原地修改全局 config["target_groups"]，避免与 /vocab_register 竞态。
         else:
-            # 保存原始配置
             original_targets = list(self.config.get("target_groups", []) or [])
             umo = event.unified_msg_origin
-            temp_registered = False
+            extra = [] if umo in original_targets else [umo]
 
-            # 临时注册
-            if umo not in original_targets:
-                self.config["target_groups"] = original_targets + [umo]
-                temp_registered = True
-                yield event.plain_result("✅ 临时注册当前会话")
+            if extra:
+                yield event.plain_result("✅ 本次测试将额外推送到当前会话")
             else:
                 yield event.plain_result("ℹ️ 当前会话已注册")
 
-            # 等待
             now = get_beijing_time()
             target_time = now + datetime.timedelta(seconds=delay)
             yield event.plain_result(f"⏰ 将在 {delay} 秒后执行推送")
-            yield event.plain_result(
-                f"📅 目标时间: {target_time.strftime('%H:%M:%S')}"
-            )
+            yield event.plain_result(f"📅 目标时间: {target_time.strftime('%H:%M:%S')}")
 
-            # 使用一次性延迟任务执行完整推送流程，避免长 sleep 挂起命令协程
             async def _delayed_push():
                 try:
                     await asyncio.sleep(delay)
 
-                    # 推送前复查：若定时任务已推送完成，跳过本次推送
-                    if self._today_pushed:
-                        logger.info("vocab_test 延迟推送：今日已推送，跳过")
-                        return
-
-                    logger.info("vocab_test 延迟推送开始...")
-                    # 步骤 1: 生成
                     async with self._workflow_lock:
+                        today_str = get_beijing_time().strftime("%Y-%m-%d")
+                        if self._last_check_date != today_str:
+                            self._remove_cached_file(self._cached_image_path)
+                            self._today_generated = False
+                            self._today_pushed = False
+                            self._cached_image_path = None
+                            self._current_word = None
+                            self._push_succeeded_umos = set()
+                            self._last_check_date = today_str
+
+                        if self._today_pushed:
+                            logger.info("vocab_test 延迟推送：今日已推送，跳过")
+                            return
+
+                        logger.info("vocab_test 延迟推送开始...")
                         generated = await self._generate_daily_card()
-                    if not generated or not self._cached_image_path:
-                        logger.error("vocab_test 延迟推送：卡片生成失败")
-                        return
+                        if not generated or not self._cached_image_path:
+                            logger.error("vocab_test 延迟推送：卡片生成失败")
+                            return
+                        self._today_generated = True
 
-                    # 步骤 2: 推送
-                    async with self._workflow_lock:
-                        result = await self._push_daily_card()
-                    # 只有全部目标成功才标记为已推送；部分成功保留未推送状态
-                    self._today_pushed = (
-                        result.attempted_count > 0
-                        and result.success_count == result.attempted_count
-                    )
-                    await self._persist_schedule_state()
+                        result = await self._push_daily_card(extra_targets=extra)
+                        self._today_pushed = (
+                            result.attempted_count > 0
+                            and result.success_count == result.attempted_count
+                        )
+                        await self._persist_schedule_state()
                     logger.info(
                         f"vocab_test 延迟推送完成：{result.success_count}/{result.attempted_count}"
                     )
-                except Exception as e:
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
                     logger.error(f"vocab_test 延迟推送失败:\n{traceback.format_exc()}")
-                finally:
-                    # 精确移除临时注册的 UMO，不恢复全局快照
-                    # （避免覆盖延迟期间其他 /vocab_register 的新注册）
-                    if temp_registered:
-                        current = self.config.get("target_groups", []) or []
-                        if umo in current:
-                            current = [t for t in current if t != umo]
-                            self.config["target_groups"] = current
-                            self.config.save_config()
 
             task = asyncio.get_running_loop().create_task(_delayed_push())
             self._background_tasks.add(task)
@@ -1233,29 +1412,47 @@ class VocabCardPlugin(Star):
         用法: /vocab_preview [单词]
         不带参数则随机选一个单词
         """
-        if not self._check_rate_limit(event):
-            yield event.plain_result(_RATE_LIMIT_MSG)
-            return
-        # 查找单词
-        if word_input:
-            # 搜索指定单词
-            word = None
-            for w in self.words:
-                if w.word.lower() == word_input.lower():
-                    word = w
-                    break
-            if not word:
-                yield event.plain_result(f"未找到单词: {word_input}")
-                return
-        else:
-            word = await self._select_word()
-            if not word:
-                yield event.plain_result("没有可用的单词数据")
+        raw_msg = ""
+        try:
+            full_str = event.get_message_str()
+            if isinstance(full_str, str):
+                m = re.match(r"^\s*\S*vocab_preview(?:\s+(.*))?$", full_str.strip())
+                if m and m.group(1):
+                    raw_msg = m.group(1).strip()
+        except Exception:
+            raw_msg = ""
+        query = (raw_msg or word_input or "").strip()
+
+        async with self._workflow_lock:
+            if query:
+                lowered = query.lower()
+                matches = [
+                    w
+                    for w in self.words
+                    if self._word_key(w).lower() == lowered
+                    or w.word.lower() == lowered
+                    or (w.phonetic and w.phonetic.lower() == lowered)
+                ]
+                if not matches:
+                    yield event.plain_result(f"未找到单词: {query}")
+                    return
+                sent_set = set(self.progress.get("sent_words", []))
+                word = next(
+                    (w for w in matches if self._word_key(w) not in sent_set),
+                    matches[0],
+                )
+            else:
+                word = await self._select_word(update_progress=False)
+                if not word:
+                    yield event.plain_result("没有可用的单词数据")
+                    return
+
+            if not self._check_rate_limit(event):
+                yield event.plain_result(_RATE_LIMIT_MSG)
                 return
 
-        # 显示单词详情
-        example_preview = (word.example or "")[:50]
-        info_msg = f"""🔍 单词预览
+            example_preview = (word.example or "")[:50]
+            info_msg = f"""🔍 单词预览
 ━━━━━━━━━━━━━━━━━━━━
 📝 单词: {word.word}
 🔊 音标: {word.phonetic or ""}
@@ -1264,22 +1461,18 @@ class VocabCardPlugin(Star):
 💬 例句: {example_preview}...
 ━━━━━━━━━━━━━━━━━━━━
 ⏳ 正在生成卡片图片..."""
-        yield event.plain_result(info_msg)
+            yield event.plain_result(info_msg)
 
-        try:
-            # 生成图片。持锁防止与 /vocab_lang 切换竞态：
-            # 若切换发生在渲染中途，旧 WordEntry 会被新 handler 渲染出错。
-            async with self._workflow_lock:
+            try:
                 image_path = await self._generate_card_image(word)
-            yield event.plain_result("✅ 图片生成成功！")
-            yield event.image_result(image_path)
+            except Exception as e:
+                logger.error(f"Preview failed: {traceback.format_exc()}")
+                yield event.plain_result(f"❌ 生成失败: {e}")
+                return
 
-            # 延迟清理，避免与平台异步上传产生竞态
-            self._schedule_image_cleanup(image_path)
-
-        except Exception as e:
-            logger.error(f"Preview failed: {traceback.format_exc()}")
-            yield event.plain_result(f"❌ 生成失败: {e}")
+        yield event.plain_result("✅ 图片生成成功！")
+        yield event.image_result(image_path)
+        self._schedule_image_cleanup(image_path)
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("vocab_now")
@@ -1298,24 +1491,28 @@ class VocabCardPlugin(Star):
         yield event.plain_result(f"📋 已注册 {len(target_groups)} 个推送目标")
 
         try:
-            # 1. 生成卡片
             yield event.plain_result("⏳ 步骤1: 生成单词卡片...")
             async with self._workflow_lock:
+                today_str = get_beijing_time().strftime("%Y-%m-%d")
+                if self._last_check_date != today_str:
+                    self._remove_cached_file(self._cached_image_path)
+                    self._today_generated = False
+                    self._today_pushed = False
+                    self._cached_image_path = None
+                    self._current_word = None
+                    self._push_succeeded_umos = set()
+                    self._last_check_date = today_str
+
                 generated = await self._generate_daily_card()
+                if not generated or not self._cached_image_path:
+                    yield event.plain_result("❌ 卡片生成失败")
+                    return
 
-            if not generated or not self._cached_image_path:
-                yield event.plain_result("❌ 卡片生成失败")
-                return
-
-            yield event.plain_result(
-                f"✅ 卡片已生成: {self._current_word.word if self._current_word else '?'}"
-            )
-
-            # 2. 推送
-            yield event.plain_result("⏳ 步骤2: 推送到所有已注册群聊...")
-            async with self._workflow_lock:
+                yield event.plain_result(
+                    f"✅ 卡片已生成: {self._current_word.word if self._current_word else '?'}"
+                )
+                yield event.plain_result("⏳ 步骤2: 推送到所有已注册群聊...")
                 result = await self._push_daily_card()
-                # 同步今日状态，避免调度器随后重复生成/推送
                 if result.success_count > 0:
                     self._today_generated = True
                     self._today_pushed = result.success_count == result.attempted_count
@@ -1384,20 +1581,19 @@ class VocabCardPlugin(Star):
                 self.words = self._load_words()
                 self.progress = self._load_progress()
 
-                if self._cached_image_path and os.path.exists(self._cached_image_path):
-                    try:
-                        os.remove(self._cached_image_path)
-                    except OSError as e:
-                        logger.warning(f"清理语种切换缓存失败: {e}")
+                self._remove_cached_file(self._cached_image_path)
                 self._cached_image_path = None
                 self._current_word = None
                 self._today_generated = False
                 self._today_pushed = False
+                self._push_succeeded_umos = set()
+                self._scheduler_consecutive_failures = 0
                 await self._persist_schedule_state()
 
-            # 保存配置
+            # 保存配置并唤醒调度器
             self.config["current_language"] = lang_id
             self.config.save_config()
+            self._schedule_wakeup.set()
 
             yield event.plain_result(
                 f"✅ 已切换到语种: {lang_id}\n📚 已加载 {len(self.words)} 个单词"
@@ -1416,6 +1612,7 @@ class VocabCardPlugin(Star):
 /vocab - 立即获取卡片（不计入进度）
 /vocab_preview [单词] - 预览卡片效果
 /vocab_status - 查看学习进度
+/vocab_lang - 查看当前与可用卡组
 /vocab_help - 显示此帮助
 ━━━━━━━━━━━━━━━━━━━━
 管理员命令:
@@ -1423,7 +1620,7 @@ class VocabCardPlugin(Star):
 /vocab_unregister - 取消每日推送
 /vocab_now - 立即执行推送流程
 /vocab_test [秒] - 测试推送（最长 {MAX_TEST_DELAY_SECONDS}s）
-/vocab_lang [语种ID] - 切换卡组
+/vocab_lang <语种ID> - 切换卡组
 ━━━━━━━━━━━━━━━━━━━━
 💡 注册后每天 {push_time} 自动推送
 📌 当前卡组: {self.current_language}"""

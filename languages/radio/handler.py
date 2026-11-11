@@ -31,18 +31,31 @@ class RadioLanguageHandler(BaseLanguageHandler):
 
     def render_card(self, word: WordEntry, **kwargs) -> str:
         """渲染无线电法规卡片"""
+        question = word.example or ""
+        answer = word.definition or ""
+        total_len = len(question) + len(answer)
+        if total_len > 180:
+            question_size = "14px"
+            answer_size = "13px"
+        elif total_len > 110:
+            question_size = "15px"
+            answer_size = "15px"
+        else:
+            question_size = self.config.styles.get("question_size", "16px")
+            answer_size = self.config.styles.get("answer_size", "18px")
+
         template_vars = {
             "question_id": word.word,
-            "question": word.example,
-            "answer": word.definition,
+            "question": question,
+            "answer": answer,
             "tags": word.extra_fields.get("tags", ""),
             "bg_url": kwargs.get("bg_url", ""),
             "theme_color": kwargs.get("theme_color", "#0f3460"),
             "bg_position": kwargs.get("bg_position", "50% 50%"),
-            "font_question": self.config.fonts.get("question", "sans-serif"),
-            "font_answer": self.config.fonts.get("answer", "sans-serif"),
-            "question_size": self.config.styles.get("question_size", "16px"),
-            "answer_size": self.config.styles.get("answer_size", "18px"),
+            "font_question": self.get_safe_font("question", "sans-serif"),
+            "font_answer": self.get_safe_font("answer", "sans-serif"),
+            "question_size": question_size,
+            "answer_size": answer_size,
             "tag1": "#无线电",
             "tag2": "#法规",
             "brand": "无线电法规",
