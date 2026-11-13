@@ -208,14 +208,17 @@ async def test_renderer_pool_get_timeout():
             await renderer._acquire_page(432, 540, 4)
 
 
-# ---- Browser install lock exists ----
+# ---- Browser install lock bound to active event loop ----
 
 
-async def test_browser_install_lock_exists():
+async def test_browser_install_lock_bound_to_active_loop():
     from astrbot_plugin_vocabcard.core import image_renderer
 
-    assert hasattr(image_renderer, "_browser_install_lock")
-    assert isinstance(image_renderer._browser_install_lock, asyncio.Lock)
+    assert not hasattr(image_renderer, "_browser_install_lock")
+    assert not hasattr(image_renderer, "_ensure_browser_installed")
+    lock = image_renderer._get_install_lock("chromium")
+    assert isinstance(lock, asyncio.Lock)
+    assert image_renderer._get_install_lock("chromium") is lock
 
 
 # ---- _mark_word_sent deduplication ----
@@ -826,18 +829,16 @@ def _plugin_with_targets(targets_by_poll):
 
 
 async def test_wait_for_push_targets_returns_after_register_and_logs_once():
-    """等待期间静默轮询，注册后返回；不计失败、不标记已推送、只提示一次。"""
+    """等待期间静默等待，注册后返回；不计失败、不标记已推送、只提示一次。"""
     import astrbot_plugin_vocabcard.main as main_module
 
     plugin = _plugin_with_targets([[], [], [], ["session-1"]])
     plugin._scheduler_consecutive_failures = 0
     plugin._today_pushed = False
     sleep = AsyncMock()
+    plugin._sleep_interruptible = sleep
     today = main_module.get_beijing_time().strftime("%Y-%m-%d")
-    with (
-        patch.object(main_module.asyncio, "sleep", sleep),
-        patch.object(main_module, "logger") as logger,
-    ):
+    with patch.object(main_module, "logger") as logger:
         await plugin._wait_for_push_targets(today)
 
     assert logger.info.call_count == 1
@@ -853,10 +854,8 @@ async def test_wait_for_push_targets_returns_on_new_day():
 
     plugin = _plugin_with_targets([[]])
     sleep = AsyncMock()
-    with (
-        patch.object(main_module.asyncio, "sleep", sleep),
-        patch.object(main_module, "logger"),
-    ):
+    plugin._sleep_interruptible = sleep
+    with patch.object(main_module, "logger"):
         # 传入一个已过去的日期，模拟等待期间跨过了 0 点
         await plugin._wait_for_push_targets("2000-01-01")
 
@@ -864,14 +863,18 @@ async def test_wait_for_push_targets_returns_on_new_day():
 
 
 def _fake_playwright(launch):
-    """构造 async_playwright() 替身，chromium.executable_path 指向不存在的文件。"""
+    """构造 async_playwright() 替身，支持 .start() 与异步上下文管理器。"""
     browser_type = MagicMock()
     browser_type.executable_path = "/nonexistent/chrome"
     browser_type.launch = launch
     playwright = MagicMock()
     playwright.chromium = browser_type
+    playwright.stop = AsyncMock()
 
     class _Manager:
+        async def start(self):
+            return playwright
+
         async def __aenter__(self):
             return playwright
 
@@ -882,23 +885,26 @@ def _fake_playwright(launch):
 
 
 async def test_browser_check_accepts_headless_shell_only():
-    """只装 headless shell 时完整版路径不存在，但能启动即视为可用。"""
+    """只装 headless shell 时完整版路径不存在，但能通过 _init_browser 启动即视为可用。"""
     import playwright.async_api
     from astrbot_plugin_vocabcard.core import image_renderer
 
     browser = MagicMock()
+    browser.is_connected.return_value = True
     browser.close = AsyncMock()
     launch = AsyncMock(return_value=browser)
+    renderer = image_renderer.ImageRenderer(max_pages=1, auto_install_browser=False)
     image_renderer._installed_browsers.discard("chromium")
     try:
         with patch.object(
             playwright.async_api, "async_playwright", _fake_playwright(launch)
         ):
-            await image_renderer._ensure_browser_installed("chromium")
-        launch.assert_awaited_once_with(headless=True)
-        browser.close.assert_awaited_once()
+            await renderer._init_browser()
+        launch.assert_awaited_once_with(**renderer._launch_options("chromium"))
+        assert renderer._browser is browser
         assert "chromium" in image_renderer._installed_browsers
     finally:
+        await renderer.close()
         image_renderer._installed_browsers.discard("chromium")
 
 
@@ -907,12 +913,14 @@ async def test_browser_check_reports_unavailable_when_launch_fails():
     from astrbot_plugin_vocabcard.core import image_renderer
 
     launch = AsyncMock(side_effect=RuntimeError("Executable doesn't exist"))
+    renderer = image_renderer.ImageRenderer(max_pages=1, auto_install_browser=False)
     image_renderer._installed_browsers.discard("chromium")
     with patch.object(
         playwright.async_api, "async_playwright", _fake_playwright(launch)
     ):
         with pytest.raises(RuntimeError, match="is unavailable"):
-            await image_renderer._ensure_browser_installed("chromium")
+            await renderer._init_browser()
+    assert renderer._browser is None
     assert "chromium" not in image_renderer._installed_browsers
 
 
@@ -1381,3 +1389,258 @@ async def test_scheduled_image_cleanup_is_cancelled_by_terminate(tmp_path):
         if not cleanup_task.done():
             cleanup_task.cancel()
         await asyncio.gather(cleanup_task, return_exceptions=True)
+
+
+# ===== Code Review Regression Tests (2026-11-13) =====
+
+
+def test_japanese_n5_removed_from_schema_and_runtime_with_safe_fallback():
+    import json
+    import pathlib
+
+    schema = json.loads(
+        (pathlib.Path(_plugin_dir) / "_conf_schema.json").read_text(encoding="utf-8")
+    )
+    assert "japanese_n5" not in schema["current_language"]["options"]
+    assert "N5" not in schema["japanese_level"]["options"]
+
+    plugin = _make_plugin()
+    assert not plugin.lang_manager.is_registered("japanese_n5")
+
+    plugin.current_language = "japanese"
+    plugin.current_handler = plugin.lang_manager.get_handler("japanese")
+    plugin.config.get = MagicMock(
+        side_effect=lambda key, default=None: (
+            "N5" if key == "japanese_level" else default
+        )
+    )
+    words = plugin._load_words()
+    assert len(words) > 0
+
+
+async def test_schedule_next_target_prioritizes_overdue_tasks_over_future_target():
+    plugin = _make_plugin()
+    tz = datetime.timezone(datetime.timedelta(hours=8))
+
+    # 07:35 时生成已逾期、推送(08:00)仍在未来：应立即补生成，不能睡到 08:00
+    plugin._today_generated = False
+    plugin._today_pushed = False
+    now_gen_overdue = datetime.datetime(2026, 6, 12, 7, 35, 0, tzinfo=tz)
+    assert (
+        plugin._calculate_next_target_time(now_gen_overdue, (7, 30), (8, 0))
+        == now_gen_overdue
+    )
+
+    # 反向配置：push_time(07:30)已过而 gen_time(08:00)在未来，应立即补跑推送链路
+    now_push_overdue = datetime.datetime(2026, 6, 12, 7, 45, 0, tzinfo=tz)
+    assert (
+        plugin._calculate_next_target_time(now_push_overdue, (8, 0), (7, 30))
+        == now_push_overdue
+    )
+
+
+async def test_cmd_push_now_persists_today_generated_when_all_pushes_fail(tmp_path):
+    from astrbot_plugin_vocabcard.core.base_handler import WordEntry
+    from astrbot_plugin_vocabcard.main import PushResult
+
+    plugin = _make_plugin(data_dir=tmp_path)
+    plugin.config.get = MagicMock(
+        side_effect=lambda key, default=None: (
+            ["group-1"] if key == "target_groups" else default
+        )
+    )
+    card_path = tmp_path / "daily.png"
+    card_path.write_bytes(b"png")
+
+    async def fake_generate():
+        plugin._current_word = WordEntry(word="alpha", definition="first")
+        plugin._cached_image_path = str(card_path)
+        return True
+
+    plugin._generate_daily_card = AsyncMock(side_effect=fake_generate)
+    plugin._push_daily_card = AsyncMock(
+        return_value=PushResult(attempted_count=1, success_count=0)
+    )
+
+    lock_states_during_yield = []
+    event = MagicMock()
+
+    def capture_plain(msg):
+        lock_states_during_yield.append(plugin._workflow_lock.locked())
+        return msg
+
+    event.plain_result = MagicMock(side_effect=capture_plain)
+
+    messages = [msg async for msg in plugin.cmd_push_now(event)]
+    assert plugin._today_generated is True
+    assert plugin._today_pushed is False
+    assert lock_states_during_yield and not any(lock_states_during_yield)
+    assert any("推送完成：0/1" in str(m) for m in messages)
+
+
+async def test_cmd_vocab_and_preview_release_workflow_lock_before_render(tmp_path):
+    from astrbot_plugin_vocabcard.core.base_handler import WordEntry
+
+    word = WordEntry(word="sample", definition="meaning", example="example sentence")
+    plugin = _make_plugin(data_dir=tmp_path, words=[word])
+    plugin._check_rate_limit = MagicMock(return_value=True)
+    plugin._select_word = AsyncMock(return_value=word)
+    plugin._schedule_image_cleanup = MagicMock()
+
+    lock_observed = []
+
+    async def fake_render_to_file(**kwargs):
+        lock_observed.append(plugin._workflow_lock.locked())
+        path = kwargs["output_path"]
+        with open(path, "wb") as f:
+            f.write(b"png")
+        return path
+
+    plugin._image_renderer.render_to_file = AsyncMock(side_effect=fake_render_to_file)
+
+    event = MagicMock()
+    event.get_message_str.return_value = "/vocab_preview sample"
+    event.plain_result = MagicMock(side_effect=lambda msg: msg)
+    event.image_result = MagicMock(side_effect=lambda p: p)
+
+    async for _ in plugin.cmd_vocab(event):
+        pass
+    async for _ in plugin.cmd_preview(event, "sample"):
+        pass
+
+    assert lock_observed == [False, False]
+
+    # /vocab_preview 被限流时不得触发选词或加锁查找
+    plugin._check_rate_limit = MagicMock(return_value=False)
+    plugin._select_word.reset_mock()
+    rate_limited_msgs = [msg async for msg in plugin.cmd_preview(event, "")]
+    assert len(rate_limited_msgs) == 1
+    plugin._select_word.assert_not_awaited()
+
+
+async def test_cmd_register_saves_async_and_wakes_wait_for_push_targets():
+    import astrbot_plugin_vocabcard.main as main_module
+
+    plugin = _make_plugin()
+    targets: list[str] = []
+    plugin.config = MagicMock()
+    plugin.config.get = MagicMock(
+        side_effect=lambda key, default=None: (
+            targets if key == "target_groups" else default
+        )
+    )
+    plugin.config.__getitem__ = MagicMock(
+        side_effect=lambda key: targets if key == "target_groups" else None
+    )
+
+    def set_item(key, value):
+        if key == "target_groups":
+            targets[:] = value
+
+    plugin.config.__setitem__ = MagicMock(side_effect=set_item)
+    plugin.config.save_config = MagicMock()
+    plugin.config.save_config_async = AsyncMock()
+
+    today = main_module.get_beijing_time().strftime("%Y-%m-%d")
+    wait_task = asyncio.create_task(plugin._wait_for_push_targets(today))
+    await asyncio.sleep(0.02)
+    assert not wait_task.done()
+
+    event = MagicMock()
+    event.unified_msg_origin = "group-99"
+    event.plain_result = MagicMock(side_effect=lambda msg: msg)
+
+    async for _ in plugin.cmd_register(event):
+        pass
+
+    await asyncio.wait_for(wait_task, timeout=0.5)
+    plugin.config.save_config_async.assert_awaited_once()
+    plugin.config.save_config.assert_not_called()
+
+
+async def test_image_renderer_startup_lock_and_close_drains_inflight(tmp_path):
+    from astrbot_plugin_vocabcard.core.image_renderer import ImageRenderer
+
+    renderer = ImageRenderer(max_pages=1)
+    lock_was_free_during_init = []
+    init_started = asyncio.Event()
+    goto_started = asyncio.Event()
+
+    async def fake_init():
+        lock_was_free_during_init.append(not renderer._lock.locked())
+        init_started.set()
+        renderer._loop = asyncio.get_running_loop()
+
+    async def slow_goto(_uri):
+        goto_started.set()
+        await asyncio.sleep(30)
+
+    page = MagicMock()
+    page.is_closed.return_value = False
+    page.goto = AsyncMock(side_effect=slow_goto)
+    page.context = MagicMock()
+    page.context.close = AsyncMock()
+
+    renderer._init_browser = AsyncMock(side_effect=fake_init)
+    renderer._create_page = AsyncMock(return_value=page)
+
+    task = asyncio.create_task(
+        renderer.render_to_file("<html></html>", str(tmp_path / "out.png"), 100, 100, 1)
+    )
+    await asyncio.wait_for(init_started.wait(), timeout=1.0)
+    await asyncio.wait_for(goto_started.wait(), timeout=1.0)
+    assert lock_was_free_during_init == [True]
+
+    await renderer.close(drain_timeout=0.05)
+    assert task.done()
+    assert renderer._active_pages_count == 0
+    with pytest.raises(RuntimeError, match="closed"):
+        await renderer.render_to_file(
+            "<html></html>", str(tmp_path / "after.png"), 100, 100, 1
+        )
+
+
+def test_long_word_font_scaling_and_clean_idiom_words():
+    import json
+    import pathlib
+    from astrbot_plugin_vocabcard.core.base_handler import WordEntry
+
+    plugin = _make_plugin()
+    ja_handler = plugin.lang_manager.get_handler("japanese")
+    idiom_handler = plugin.lang_manager.get_handler("idiom")
+
+    short_ja = ja_handler.render_card(WordEntry(word="猫", definition="cat"))
+    long_ja = ja_handler.render_card(
+        WordEntry(word="パーソナルコンピューター", definition="PC")
+    )
+    assert "font-size: 48px;" in short_ja
+    assert "font-size: 30px;" in long_ja
+
+    short_idiom = idiom_handler.render_card(WordEntry(word="画龙点睛", definition="d"))
+    medium_idiom = idiom_handler.render_card(
+        WordEntry(word="一言既出，驷马难追", definition="d")
+    )
+    long_idiom = idiom_handler.render_card(
+        WordEntry(word="知之为知之，不知为不知", definition="d")
+    )
+    assert "font-size: 56px;" in short_idiom
+    assert "font-size: 34px;" in medium_idiom
+    assert "font-size: 30px;" in long_idiom
+
+    idioms = json.loads(
+        (pathlib.Path(_plugin_dir) / "languages" / "idiom" / "words.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    serialized = json.dumps(idioms, ensure_ascii=False)
+    for dirty in (
+        "pián",
+        "zhī",
+        "gū",
+        "chòu",
+        "chen）",
+        "fen）",
+        "暴殄tian天物",
+        "某 种",
+    ):
+        assert dirty not in serialized

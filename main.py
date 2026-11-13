@@ -12,6 +12,8 @@ from astrbot.api.event import MessageChain
 import asyncio
 import collections
 import datetime
+import hashlib
+import inspect
 import json
 import os
 import random
@@ -163,12 +165,11 @@ class VocabCardPlugin(Star):
         # 注册语种处理器
         self.lang_manager.register_language("english", EnglishLanguageHandler)
         self.lang_manager.register_language("japanese", JapaneseLanguageHandler)
-        # 注册日语 JLPT 分级卡组（N1-N5 独立进度）
+        # 注册日语 JLPT 分级卡组（内置词库收录 N1-N4，独立进度）
         self.lang_manager.register_language("japanese_n1", JapaneseLanguageHandler)
         self.lang_manager.register_language("japanese_n2", JapaneseLanguageHandler)
         self.lang_manager.register_language("japanese_n3", JapaneseLanguageHandler)
         self.lang_manager.register_language("japanese_n4", JapaneseLanguageHandler)
-        self.lang_manager.register_language("japanese_n5", JapaneseLanguageHandler)
         self.lang_manager.register_language("idiom", IdiomLanguageHandler)
         self.lang_manager.register_language("classical", ClassicalLanguageHandler)
         self.lang_manager.register_language("radio", RadioLanguageHandler)
@@ -483,6 +484,11 @@ class VocabCardPlugin(Star):
         try:
             if self.current_language == "japanese":
                 level_filter = self.config.get("japanese_level", "all")
+                if str(level_filter).strip().upper() == "N5":
+                    logger.warning(
+                        "内置日语词库暂未收录 N5 词汇，japanese_level 自动回退为 all"
+                    )
+                    level_filter = "all"
                 words = self.current_handler.load_words(level_filter=level_filter)
             else:
                 words = self.current_handler.load_words()
@@ -839,6 +845,15 @@ class VocabCardPlugin(Star):
             today, datetime.time(push_time[0], push_time[1]), tzinfo=tz
         )
 
+        # 重启补跑 / 失败重试：已过设定时间但尚未完成的任务优先立即执行，
+        # 避免 push_time 在未来时被未来目标掩盖而延误生成或失败退避重试。
+        if not self._today_generated and gen_datetime <= now:
+            logger.debug("生成时间已过但未完成，立即执行")
+            return now
+        if not self._today_pushed and push_datetime <= now:
+            logger.debug("推送时间已过但未完成，立即执行")
+            return now
+
         # 找出所有未来的目标时间
         targets = []
 
@@ -849,15 +864,6 @@ class VocabCardPlugin(Star):
         # 如果推送尚未完成，且推送时间未到
         if not self._today_pushed and push_datetime > now:
             targets.append(push_datetime)
-
-        # 重启补跑：如果生成/推送时间已过但任务未完成，立即执行
-        if not targets:
-            if not self._today_generated and gen_datetime <= now:
-                logger.info("生成时间已过但未完成，立即补跑")
-                return now
-            if not self._today_pushed and push_datetime <= now:
-                logger.info("推送时间已过但未完成，立即补跑")
-                return now
 
         # 如果今天的任务都完成了，睡到次日 00:00 触发跨天重置，再计算次日最早任务
         if not targets:
@@ -994,10 +1000,8 @@ class VocabCardPlugin(Star):
             word, bg_url=bg_url, theme_color=theme_color, bg_position=bg_position
         )
 
-    async def _generate_card_image(self, word: WordEntry) -> str:
-        """Generate word card image"""
-        import hashlib
-
+    def _prepare_card_render(self, word: WordEntry) -> tuple[str, str, int, int]:
+        """准备单词卡片 HTML、输出路径及画布尺寸。"""
         html_content = self._render_template(word)
 
         safe_name = hashlib.md5(word.word.encode()).hexdigest()[:12]
@@ -1006,23 +1010,33 @@ class VocabCardPlugin(Star):
         card_size = getattr(self.current_handler.config, "card_size", (432, 540))
         width = _safe_int(card_size[0], 432) if len(card_size) >= 2 else 432
         height = _safe_int(card_size[1], 540) if len(card_size) >= 2 else 540
+        return html_content, str(output_png), width, height
 
+    async def _render_card_file(
+        self, html_content: str, output_path: str, width: int, height: int
+    ) -> str:
+        """将已渲染的卡片 HTML 截图保存为 PNG 文件。"""
         try:
             await self._image_renderer.render_to_file(
                 html_content=html_content,
-                output_path=str(output_png),
+                output_path=output_path,
                 width=width,
                 height=height,
                 scale=self._render_scale,
                 network_idle_timeout_ms=self._bg_load_timeout,
             )
 
-            logger.info(f"卡片图片已生成: {output_png}")
-            return str(output_png)
+            logger.info(f"卡片图片已生成: {output_path}")
+            return output_path
 
         except Exception as e:
             logger.error(f"生成卡片图片失败: {e}")
             raise
+
+    async def _generate_card_image(self, word: WordEntry) -> str:
+        """Generate word card image"""
+        html_content, output_path, width, height = self._prepare_card_render(word)
+        return await self._render_card_file(html_content, output_path, width, height)
 
     def _check_rate_limit(self, event: AstrMessageEvent) -> bool:
         """公共渲染命令限流：每用户 30 秒 1 次，防止刷屏触发重型浏览器渲染。
@@ -1067,7 +1081,8 @@ class VocabCardPlugin(Star):
 
         yield event.image_result(path) 之后，文件读取/上传可能由平台异步
         完成，立即 os.remove 存在发送失败的风险。改为一次性延迟任务，
-        延迟 30 秒后清理；若任务被取消则尽力兜底。
+        延迟 30 秒后清理；若任务因 terminate() 被取消，则刻意保留文件以免
+        打断在途上传，遗留文件将在下次 initialize() 启动过期清理时回收。
         """
         if not path:
             return
@@ -1119,18 +1134,20 @@ class VocabCardPlugin(Star):
             return False
 
     async def _wait_for_push_targets(self, today_str: str) -> None:
-        """没有推送目标时静默等待，直到有会话注册或进入新的一天。
+        """没有推送目标时可中断睡眠，直到有会话注册、切换语种或进入新的一天。
 
         不计入连续失败、不标记今日已推送：避免退避重试刷屏，也保证
-        当天稍后用 /vocab_register 注册的会话仍能收到当天的卡片。
-        等待期间只轮询配置，不经过调度主循环，因此不会重复输出日志。
+        当天稍后用 /vocab_register 注册的会话能立即被唤醒并收到当天的卡片。
         """
         if self._no_target_notice_date != today_str:
             logger.info("尚无已注册的推送目标，卡片已生成，注册后将自动推送")
             self._no_target_notice_date = today_str
+        had_cache = bool(self._cached_image_path)
         while not self.config.get("target_groups", []):
-            await asyncio.sleep(NO_TARGET_RECHECK_SECONDS)
+            await self._sleep_interruptible(NO_TARGET_RECHECK_SECONDS)
             if get_beijing_time().strftime("%Y-%m-%d") != today_str:
+                return
+            if had_cache and not self._cached_image_path:
                 return
 
     async def _push_daily_card(
@@ -1218,6 +1235,14 @@ class VocabCardPlugin(Star):
 
     # ========== 用户命令 ==========
 
+    async def _save_plugin_config(self) -> None:
+        """优先调用异步配置保存，兼容仅提供同步 save_config 的测试替身。"""
+        save_async = getattr(self.config, "save_config_async", None)
+        if inspect.iscoroutinefunction(save_async):
+            await save_async()
+            return
+        self.config.save_config()
+
     @filter.command("vocab")
     async def cmd_vocab(self, event: AstrMessageEvent):
         """手动获取一个单词卡片（不计入学习进度）"""
@@ -1228,10 +1253,12 @@ class VocabCardPlugin(Star):
         try:
             async with self._workflow_lock:
                 word = await self._select_word(update_progress=False)
-                if not word:
-                    yield event.plain_result("没有可用的单词数据")
-                    return
-                image_path = await self._generate_card_image(word)
+                render_spec = self._prepare_card_render(word) if word else None
+            if render_spec is None:
+                yield event.plain_result("没有可用的单词数据")
+                return
+            html_content, image_path, width, height = render_spec
+            await self._render_card_file(html_content, image_path, width, height)
             yield event.image_result(image_path)
             self._schedule_image_cleanup(image_path)
         except Exception as e:
@@ -1273,7 +1300,8 @@ class VocabCardPlugin(Star):
 
         target_groups.append(umo)
         self.config["target_groups"] = target_groups
-        self.config.save_config()
+        await self._save_plugin_config()
+        self._schedule_wakeup.set()
 
         push_time = self.config.get("push_time_send", "08:00")
         yield event.plain_result(f"注册成功！🎉\n将在每天 {push_time} 推送单词卡片")
@@ -1291,7 +1319,7 @@ class VocabCardPlugin(Star):
 
         target_groups.remove(umo)
         self.config["target_groups"] = target_groups
-        self.config.save_config()
+        await self._save_plugin_config()
 
         yield event.plain_result("已取消注册 👋")
 
@@ -1412,6 +1440,10 @@ class VocabCardPlugin(Star):
         用法: /vocab_preview [单词]
         不带参数则随机选一个单词
         """
+        if not self._check_rate_limit(event):
+            yield event.plain_result(_RATE_LIMIT_MSG)
+            return
+
         raw_msg = ""
         try:
             full_str = event.get_message_str()
@@ -1423,6 +1455,9 @@ class VocabCardPlugin(Star):
             raw_msg = ""
         query = (raw_msg or word_input or "").strip()
 
+        error_msg = None
+        info_msg = ""
+        render_spec = None
         async with self._workflow_lock:
             if query:
                 lowered = query.lower()
@@ -1434,25 +1469,24 @@ class VocabCardPlugin(Star):
                     or (w.phonetic and w.phonetic.lower() == lowered)
                 ]
                 if not matches:
-                    yield event.plain_result(f"未找到单词: {query}")
-                    return
-                sent_set = set(self.progress.get("sent_words", []))
-                word = next(
-                    (w for w in matches if self._word_key(w) not in sent_set),
-                    matches[0],
-                )
+                    error_msg = f"未找到单词: {query}"
+                else:
+                    sent_set = set(self.progress.get("sent_words", []))
+                    word = next(
+                        (w for w in matches if self._word_key(w) not in sent_set),
+                        matches[0],
+                    )
+                    render_spec = self._prepare_card_render(word)
             else:
                 word = await self._select_word(update_progress=False)
                 if not word:
-                    yield event.plain_result("没有可用的单词数据")
-                    return
+                    error_msg = "没有可用的单词数据"
+                else:
+                    render_spec = self._prepare_card_render(word)
 
-            if not self._check_rate_limit(event):
-                yield event.plain_result(_RATE_LIMIT_MSG)
-                return
-
-            example_preview = (word.example or "")[:50]
-            info_msg = f"""🔍 单词预览
+            if render_spec is not None:
+                example_preview = (word.example or "")[:50]
+                info_msg = f"""🔍 单词预览
 ━━━━━━━━━━━━━━━━━━━━
 📝 单词: {word.word}
 🔊 音标: {word.phonetic or ""}
@@ -1461,14 +1495,20 @@ class VocabCardPlugin(Star):
 💬 例句: {example_preview}...
 ━━━━━━━━━━━━━━━━━━━━
 ⏳ 正在生成卡片图片..."""
-            yield event.plain_result(info_msg)
 
-            try:
-                image_path = await self._generate_card_image(word)
-            except Exception as e:
-                logger.error(f"Preview failed: {traceback.format_exc()}")
-                yield event.plain_result(f"❌ 生成失败: {e}")
-                return
+        if error_msg is not None:
+            yield event.plain_result(error_msg)
+            return
+
+        yield event.plain_result(info_msg)
+
+        html_content, image_path, width, height = render_spec
+        try:
+            await self._render_card_file(html_content, image_path, width, height)
+        except Exception as e:
+            logger.error(f"Preview failed: {traceback.format_exc()}")
+            yield event.plain_result(f"❌ 生成失败: {e}")
+            return
 
         yield event.plain_result("✅ 图片生成成功！")
         yield event.image_result(image_path)
@@ -1504,18 +1544,25 @@ class VocabCardPlugin(Star):
                     self._last_check_date = today_str
 
                 generated = await self._generate_daily_card()
-                if not generated or not self._cached_image_path:
-                    yield event.plain_result("❌ 卡片生成失败")
-                    return
+                if generated and self._cached_image_path:
+                    self._today_generated = True
+                    await self._persist_schedule_state()
+                word_label = self._current_word.word if self._current_word else "?"
 
-                yield event.plain_result(
-                    f"✅ 卡片已生成: {self._current_word.word if self._current_word else '?'}"
-                )
-                yield event.plain_result("⏳ 步骤2: 推送到所有已注册群聊...")
+            if not generated or not self._cached_image_path:
+                yield event.plain_result("❌ 卡片生成失败")
+                return
+
+            yield event.plain_result(f"✅ 卡片已生成: {word_label}")
+            yield event.plain_result("⏳ 步骤2: 推送到所有已注册群聊...")
+
+            async with self._workflow_lock:
                 result = await self._push_daily_card()
                 if result.success_count > 0:
-                    self._today_generated = True
-                    self._today_pushed = result.success_count == result.attempted_count
+                    self._today_pushed = (
+                        result.attempted_count > 0
+                        and result.success_count == result.attempted_count
+                    )
                     await self._persist_schedule_state()
 
             yield event.plain_result(
@@ -1592,7 +1639,7 @@ class VocabCardPlugin(Star):
 
             # 保存配置并唤醒调度器
             self.config["current_language"] = lang_id
-            self.config.save_config()
+            await self._save_plugin_config()
             self._schedule_wakeup.set()
 
             yield event.plain_result(

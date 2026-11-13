@@ -89,7 +89,7 @@ async def main():
             # 等待背景图加载
             try:
                 await page.wait_for_load_state("networkidle", timeout=15000)
-            except:
+            except Exception:
                 pass
             await page.wait_for_timeout(3000)
 

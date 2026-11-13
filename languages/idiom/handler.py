@@ -33,6 +33,16 @@ class IdiomLanguageHandler(BaseLanguageHandler):
 
     def render_card(self, word: WordEntry, **kwargs) -> str:
         """渲染成语卡片"""
+        word_len = len(word.word)
+        if word_len > 9:
+            word_size = "30px"
+        elif word_len > 7:
+            word_size = "34px"
+        elif word_len > 5:
+            word_size = "44px"
+        else:
+            word_size = self.config.styles.get("word_size", "56px")
+
         template_vars = {
             "word": word.word,
             "definition": word.definition,
@@ -41,7 +51,7 @@ class IdiomLanguageHandler(BaseLanguageHandler):
             "bg_position": kwargs.get("bg_position", "50% 50%"),
             "font_word": self.get_safe_font("word", "serif"),
             "font_definition": self.get_safe_font("definition", "sans-serif"),
-            "word_size": self.config.styles.get("word_size", "56px"),
+            "word_size": word_size,
             "definition_size": self.config.styles.get("definition_size", "18px"),
             "tag1": "#成语",
             "tag2": "#Daily",

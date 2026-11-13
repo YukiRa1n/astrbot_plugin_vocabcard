@@ -2,15 +2,15 @@
   "current_language": {
     "description": "当前卡组",
     "type": "string",
-    "options": ["english", "japanese", "japanese_n1", "japanese_n2", "japanese_n3", "japanese_n4", "japanese_n5", "idiom", "classical", "radio"],
-    "hint": "卡组选项: english=英语六级, japanese=日语全部, japanese_n1~n5=日语分级(独立进度), idiom=成语, classical=古文, radio=无线电法规。切换也可用 /vocab_lang（管理员）",
+    "options": ["english", "japanese", "japanese_n1", "japanese_n2", "japanese_n3", "japanese_n4", "idiom", "classical", "radio"],
+    "hint": "卡组选项: english=英语六级, japanese=日语全部, japanese_n1~n4=日语分级(独立进度), idiom=成语, classical=古文, radio=无线电法规。切换也可用 /vocab_lang（管理员）",
     "default": "english"
   },
   "japanese_level": {
     "description": "日语JLPT等级筛选",
     "type": "string",
-    "options": ["all", "N1", "N2", "N3", "N4", "N5"],
-    "hint": "仅对 japanese 全量卡组生效: all=全部, N1=最难, N5=最简单。分级卡组 japanese_n* 使用各自配置",
+    "options": ["all", "N1", "N2", "N3", "N4"],
+    "hint": "仅对 japanese 全量卡组生效: all=全部, N1=最难, N4=最简单（内置词库当前收录 N1~N4）。分级卡组 japanese_n* 使用各自配置",
     "default": "all"
   },
   "target_groups": {

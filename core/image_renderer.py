@@ -18,7 +18,6 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 _browser_install_locks: dict[str, tuple[object, asyncio.Lock]] = {}
-_browser_install_lock = asyncio.Lock()
 
 # 浏览器安装标记
 _installed_browsers: set[str] = set()
@@ -78,41 +77,6 @@ async def _run_playwright_install(
     logger.info("Playwright %s browser installed", engine)
 
 
-async def _ensure_browser_installed(
-    engine: str = "chromium",
-    *,
-    allow_install: bool = False,
-):
-    """确保所选 Playwright 浏览器已安装。"""
-    global _browser_installed
-    if engine in _installed_browsers:
-        return
-
-    async with _get_install_lock(engine):
-        if engine in _installed_browsers:
-            return
-        try:
-            from playwright.async_api import async_playwright
-
-            async with async_playwright() as p:
-                browser = await getattr(p, engine).launch(headless=True)
-                await browser.close()
-            _installed_browsers.add(engine)
-            _browser_installed = engine == "chromium" or _browser_installed
-            logger.info("Playwright %s browser ready", engine)
-            return
-        except Exception as exc:
-            if not allow_install:
-                raise RuntimeError(
-                    f"Playwright {engine} is unavailable. "
-                    f"Install it during deployment with: {sys.executable} -m playwright install {engine}"
-                ) from exc
-            launch_failure = exc
-            logger.info("Installing Playwright %s browser...", engine)
-
-        await _run_playwright_install(engine, launch_failure)
-
-
 class ImageRenderer:
     """
     图片渲染器
@@ -143,7 +107,10 @@ class ImageRenderer:
         self._owned_contexts = set()
         self._active_pages_count = 0
         self._lock = asyncio.Lock()
+        self._startup_lock = asyncio.Lock()
         self._loop = None
+        self._closed = False
+        self._inflight: set[asyncio.Task] = set()
         logger.info(
             "ImageRenderer 页面池初始化完成 (引擎: %s, 最大页面上限: %s)",
             engine,
@@ -174,6 +141,7 @@ class ImageRenderer:
             return
         self._loop = current_loop
         self._lock = asyncio.Lock()
+        self._startup_lock = asyncio.Lock()
         await self._force_cleanup_loop_resources()
 
     async def _force_cleanup_loop_resources(self):
@@ -231,11 +199,12 @@ class ImageRenderer:
                 for ctx in tuple(self._owned_contexts):
                     await self._best_effort_close(ctx, "close")
             self._browser = None
-            self._pool = asyncio.Queue()
-            self._page_scales = {}
-            self._owned_contexts.clear()
-            self._active_pages_count = 0
-            self._page_available.set()
+            async with self._lock:
+                self._pool = asyncio.Queue()
+                self._page_scales = {}
+                self._owned_contexts.clear()
+                self._active_pages_count = 0
+                self._page_available.set()
             if self._playwright is not None:
                 await self._best_effort_close(self._playwright, "stop")
                 self._playwright = None
@@ -324,8 +293,17 @@ class ImageRenderer:
         deadline = asyncio.get_running_loop().time() + max(0.001, wait_timeout)
 
         while True:
+            if self._closed:
+                raise RuntimeError("ImageRenderer is closed")
+            if self._browser is None or not self._browser.is_connected():
+                async with self._startup_lock:
+                    await self._init_browser()
+                if self._closed:
+                    raise RuntimeError("ImageRenderer is closed")
+
             async with self._lock:
-                await self._init_browser()
+                if self._closed:
+                    raise RuntimeError("ImageRenderer is closed")
 
                 while not self._pool.empty():
                     page = self._pool.get_nowait()
@@ -405,15 +383,22 @@ class ImageRenderer:
         network_idle_timeout_ms: int,
         output_path: Optional[str] = None,
     ):
+        if self._closed:
+            raise RuntimeError("ImageRenderer is closed")
+
+        current_task = asyncio.current_task()
+        if current_task is not None:
+            self._inflight.add(current_task)
+
         page = None
         idle_ms = max(1000, min(60000, int(network_idle_timeout_ms or 8000)))
         temp_dir = tempfile.gettempdir()
         temp_html_path = os.path.join(temp_dir, f"vocab_{uuid.uuid4().hex}.html")
-        fd = os.open(temp_html_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(html_content)
-
         try:
+            fd = os.open(temp_html_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(html_content)
+
             page = await self._acquire_page(width, height, scale)
             await asyncio.wait_for(
                 page.goto(Path(temp_html_path).as_uri()), timeout=60.0
@@ -442,6 +427,8 @@ class ImageRenderer:
                 await self._discard_leased_page(page)
             raise
         finally:
+            if current_task is not None:
+                self._inflight.discard(current_task)
             try:
                 if os.path.exists(temp_html_path):
                     os.remove(temp_html_path)
@@ -485,9 +472,25 @@ class ImageRenderer:
             output_path=None,
         )
 
-    async def close(self):
-        """关闭所有浏览器资源，释放池"""
+    async def close(self, drain_timeout: float = 5.0):
+        """等待或取消在途渲染，关闭所有浏览器资源并释放池。"""
+        self._closed = True
         await self._ensure_loop()
+        self._page_available.set()
+
+        current = asyncio.current_task()
+        inflight = [
+            task
+            for task in tuple(self._inflight)
+            if not task.done() and task is not current
+        ]
+        if inflight:
+            _, pending = await asyncio.wait(inflight, timeout=drain_timeout)
+            for task in pending:
+                task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+
         async with self._lock:
             while not self._pool.empty():
                 page = self._pool.get_nowait()

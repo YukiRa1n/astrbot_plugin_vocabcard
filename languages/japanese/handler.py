@@ -93,6 +93,16 @@ class JapaneseLanguageHandler(BaseLanguageHandler):
         example_cn = word.extra_fields.get("example_cn", "")
         level = word.extra_fields.get("level", "JLPT")
 
+        word_len = len(word.word)
+        if word_len > 9:
+            word_size = "30px"
+        elif word_len > 7:
+            word_size = "36px"
+        elif word_len > 5:
+            word_size = "42px"
+        else:
+            word_size = self.config.styles.get("word_size", "48px")
+
         # 准备模板变量
         template_vars = {
             # 单词数据
@@ -113,7 +123,7 @@ class JapaneseLanguageHandler(BaseLanguageHandler):
             "font_definition": self.get_safe_font("definition", "sans-serif"),
             "font_example": self.get_safe_font("example", "serif"),
             # 样式配置
-            "word_size": self.config.styles.get("word_size", "48px"),
+            "word_size": word_size,
             "word_letter_spacing": self.config.styles.get(
                 "word_letter_spacing", "0.05em"
             ),

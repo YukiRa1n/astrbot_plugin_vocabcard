@@ -7,14 +7,13 @@ import asyncio
 import json
 import random
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Dict, Optional
 
 # 添加项目根目录到路径
 project_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(project_dir))
-
-from dataclasses import dataclass, field
-from typing import Optional, Dict
 
 
 @dataclass
@@ -321,7 +320,7 @@ async def generate_card_image(html_content, output_path):
             # 等待背景图加载
             try:
                 await page.wait_for_load_state("networkidle", timeout=10000)
-            except:
+            except Exception:
                 pass
             await page.wait_for_timeout(2000)
 
