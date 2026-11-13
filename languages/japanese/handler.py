@@ -34,24 +34,25 @@ class JapaneseLanguageHandler(BaseLanguageHandler):
         Returns:
             WordEntry 列表
         """
-        # 优先使用传入参数，否则使用配置中的默认值
-        filter_level = (
+        # 优先使用传入参数，否则使用配置中的默认值，统一去空白并转大写
+        raw_level = (
             level_filter
             if level_filter is not None
             else getattr(self.config, "level_filter", "all")
         )
+        filter_level = str(raw_level or "all").strip().upper()
 
         raw_data = self.loader.load_json()
 
         words = []
         for item in raw_data:
-            # 等级筛选
-            item_level = item.get("level", "")  # 格式: JLPT-N4
-            if filter_level != "all":
-                # 检查是否匹配指定等级
+            # 等级筛选（大小写无关）
+            item_level = str(item.get("level", "") or "").strip()  # 格式: JLPT-N4
+            if filter_level != "ALL":
+                upper_item = item_level.upper()
                 if (
-                    f"JLPT-{filter_level}" not in item_level
-                    and filter_level not in item_level
+                    f"JLPT-{filter_level}" not in upper_item
+                    and filter_level not in upper_item
                 ):
                     continue
 

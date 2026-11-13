@@ -18,6 +18,7 @@ CDN_BACKGROUNDS = [
 
 async def main():
     """测试渲染器"""
+    from core.card_renderer import CardRenderer
     from core.image_renderer import get_image_renderer
 
     print("测试 Playwright 渲染器...")
@@ -28,11 +29,6 @@ async def main():
         words = json.load(f)
 
     word_data = words[2]  # extraordinary
-
-    # 加载模板
-    template_path = project_dir / "templates" / "card.html"
-    with open(template_path, "r", encoding="utf-8") as f:
-        template = f.read()
 
     # 替换变量
     variables = {
@@ -59,15 +55,15 @@ async def main():
         "brand": "VocabCard",
     }
 
-    html = template
-    for key, value in variables.items():
-        html = html.replace("{{ " + key + " }}", str(value) if value else "")
-        html = html.replace("{{" + key + "}}", str(value) if value else "")
+    html = CardRenderer(project_dir / "templates").render("card.html", variables)
 
     # 测试渲染
     renderer = get_image_renderer()
     output_path = str(project_dir / "test_output.png")
-    await renderer.render_to_file(html, output_path, width=432, height=540, scale=2)
+    try:
+        await renderer.render_to_file(html, output_path, width=432, height=540, scale=2)
+    finally:
+        await renderer.close()
 
     print(f"测试成功！图片已生成: {output_path}")
 

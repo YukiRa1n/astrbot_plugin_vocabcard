@@ -19,10 +19,6 @@ logger = logging.getLogger(__name__)
 
 _browser_install_locks: dict[str, tuple[object, asyncio.Lock]] = {}
 
-# 浏览器安装标记
-_installed_browsers: set[str] = set()
-_browser_installed = False
-
 
 def _get_install_lock(engine: str) -> asyncio.Lock:
     """Return an install lock bound to the active event loop."""
@@ -39,7 +35,6 @@ async def _run_playwright_install(
     engine: str, launch_failure: Optional[BaseException] = None
 ) -> None:
     """Install the requested Playwright browser with a bounded timeout."""
-    global _browser_installed
     command = [sys.executable, "-m", "playwright", "install", engine]
     if engine == "chromium":
         command.append("--only-shell")
@@ -72,8 +67,6 @@ async def _run_playwright_install(
             f"Cannot install Playwright {engine}: {detail.strip()}"
         ) from launch_failure
 
-    _installed_browsers.add(engine)
-    _browser_installed = engine == "chromium" or _browser_installed
     logger.info("Playwright %s browser installed", engine)
 
 
@@ -104,6 +97,8 @@ class ImageRenderer:
         self._pool = asyncio.Queue()
         self._page_available = asyncio.Event()
         self._page_scales = {}
+        self._page_generations: dict[object, int] = {}
+        self._browser_gen = 0
         self._owned_contexts = set()
         self._active_pages_count = 0
         self._lock = asyncio.Lock()
@@ -151,11 +146,13 @@ class ImageRenderer:
         playwright = self._playwright
         owns = self._owns_browser
         contexts = tuple(self._owned_contexts)
+        self._browser_gen += 1
         self._browser = None
         self._playwright = None
         self._pool = asyncio.Queue()
         self._page_available = asyncio.Event()
         self._page_scales = {}
+        self._page_generations.clear()
         self._owned_contexts.clear()
         self._active_pages_count = 0
 
@@ -180,7 +177,6 @@ class ImageRenderer:
 
     async def _init_browser(self):
         """初始化 Playwright 和无头浏览器实例 (支持事件循环改变后的自愈)"""
-        global _browser_installed
         current_loop = asyncio.get_running_loop()
         if self._loop is None:
             self._loop = current_loop
@@ -200,6 +196,7 @@ class ImageRenderer:
                     await self._best_effort_close(ctx, "close")
             self._browser = None
             async with self._lock:
+                self._browser_gen += 1
                 self._pool = asyncio.Queue()
                 self._page_scales = {}
                 self._owned_contexts.clear()
@@ -234,8 +231,6 @@ class ImageRenderer:
                         await _run_playwright_install(self.engine, exc)
                     self._browser = await browser_type.launch(**options)
                 self._owns_browser = True
-                _installed_browsers.add(self.engine)
-                _browser_installed = self.engine == "chromium" or _browser_installed
                 logger.info("Playwright %s 浏览器进程启动成功", self.engine)
         except BaseException:
             if self._playwright is not None:
@@ -260,6 +255,7 @@ class ImageRenderer:
 
     async def _dispose_page(self, page):
         self._page_scales.pop(page, None)
+        self._page_generations.pop(page, None)
         ctx = getattr(page, "context", None)
         if ctx is not None:
             self._owned_contexts.discard(ctx)
@@ -274,15 +270,21 @@ class ImageRenderer:
             except Exception:
                 pass
 
-    async def _discard_leased_page(self, page) -> None:
+    async def _discard_leased_page(self, page, lease_gen: Optional[int] = None) -> None:
         """Dispose a leased page and release its concurrency slot."""
         if page is None:
             return
+        page_gen = (
+            lease_gen
+            if lease_gen is not None
+            else self._page_generations.get(page, self._browser_gen)
+        )
         try:
             await self._dispose_page(page)
         finally:
             async with self._lock:
-                self._active_pages_count = max(0, self._active_pages_count - 1)
+                if page_gen == self._browser_gen:
+                    self._active_pages_count = max(0, self._active_pages_count - 1)
                 self._page_available.set()
 
     async def _acquire_page(
@@ -307,26 +309,25 @@ class ImageRenderer:
 
                 while not self._pool.empty():
                     page = self._pool.get_nowait()
+                    if page.is_closed():
+                        logger.warning("从池中获取到已关闭的页面，予以丢弃")
+                        self._active_pages_count = max(0, self._active_pages_count - 1)
+                        self._page_available.set()
+                        await self._dispose_page(page)
+                        continue
+                    if self._page_scales.get(page) != scale:
+                        self._active_pages_count = max(0, self._active_pages_count - 1)
+                        self._page_available.set()
+                        await self._dispose_page(page)
+                        continue
                     try:
-                        if page.is_closed():
-                            logger.warning("从池中获取到已关闭的页面，予以丢弃")
-                            self._active_pages_count = max(
-                                0, self._active_pages_count - 1
-                            )
-                            self._page_scales.pop(page, None)
-                            continue
-                        if self._page_scales.get(page) != scale:
-                            self._active_pages_count = max(
-                                0, self._active_pages_count - 1
-                            )
-                            await self._dispose_page(page)
-                            continue
                         await page.set_viewport_size({"width": width, "height": height})
+                        self._page_generations[page] = self._browser_gen
                         return page
                     except BaseException as exc:
                         self._active_pages_count = max(0, self._active_pages_count - 1)
-                        await self._dispose_page(page)
                         self._page_available.set()
+                        await self._dispose_page(page)
                         if isinstance(exc, asyncio.CancelledError):
                             raise
                         logger.warning(f"获取池中页面失败，自动丢弃自愈: {exc}")
@@ -335,7 +336,12 @@ class ImageRenderer:
                     logger.info(
                         f"正在创建新的 Browser Page (当前活动页面数: {self._active_pages_count + 1})"
                     )
-                    page = await self._create_page(width, height, scale)
+                    try:
+                        page = await self._create_page(width, height, scale)
+                    except BaseException:
+                        self._page_available.set()
+                        raise
+                    self._page_generations[page] = self._browser_gen
                     self._active_pages_count += 1
                     return page
 
@@ -352,27 +358,39 @@ class ImageRenderer:
                     "Timed out waiting for available browser page"
                 ) from exc
 
-    async def _release_page(self, page):
+    async def _release_page(self, page, lease_gen: Optional[int] = None):
         """归还或销毁 Page 实例 (DOM 自净化与防泄露)"""
         if page is None:
             return
+        page_gen = (
+            lease_gen
+            if lease_gen is not None
+            else self._page_generations.get(page, self._browser_gen)
+        )
 
         try:
-            if page.is_closed():
-                await self._discard_leased_page(page)
+            if page_gen != self._browser_gen or page.is_closed():
+                await self._discard_leased_page(page, lease_gen=page_gen)
                 return
 
             await page.goto("about:blank")
+            stale = False
             async with self._lock:
-                self._pool.put_nowait(page)
-                self._page_available.set()
-            logger.debug("页面已成功清空 DOM 并归还到池中")
+                if page_gen != self._browser_gen or self._closed:
+                    stale = True
+                else:
+                    self._pool.put_nowait(page)
+                    self._page_available.set()
+            if stale:
+                await self._dispose_page(page)
+            else:
+                logger.debug("页面已成功清空 DOM 并归还到池中")
         except asyncio.CancelledError:
-            await self._discard_leased_page(page)
+            await self._discard_leased_page(page, lease_gen=page_gen)
             raise
         except Exception as e:
             logger.warning(f"归还页面失败，强制销毁: {e}")
-            await self._discard_leased_page(page)
+            await self._discard_leased_page(page, lease_gen=page_gen)
 
     async def _render_html(
         self,
@@ -391,6 +409,7 @@ class ImageRenderer:
             self._inflight.add(current_task)
 
         page = None
+        lease_gen: Optional[int] = None
         idle_ms = max(1000, min(60000, int(network_idle_timeout_ms or 8000)))
         temp_dir = tempfile.gettempdir()
         temp_html_path = os.path.join(temp_dir, f"vocab_{uuid.uuid4().hex}.html")
@@ -400,6 +419,7 @@ class ImageRenderer:
                 f.write(html_content)
 
             page = await self._acquire_page(width, height, scale)
+            lease_gen = self._page_generations.get(page, self._browser_gen)
             await asyncio.wait_for(
                 page.goto(Path(temp_html_path).as_uri()), timeout=60.0
             )
@@ -418,13 +438,13 @@ class ImageRenderer:
                 result = await page.screenshot(type="png", scale="device")
 
             released, page = page, None
-            await self._release_page(released)
+            await self._release_page(released, lease_gen=lease_gen)
             return result
         except BaseException as e:
             if not isinstance(e, asyncio.CancelledError):
                 logger.error(f"渲染图片失败: {e}")
             if page is not None:
-                await self._discard_leased_page(page)
+                await self._discard_leased_page(page, lease_gen=lease_gen)
             raise
         finally:
             if current_task is not None:
@@ -492,6 +512,7 @@ class ImageRenderer:
                 await asyncio.gather(*pending, return_exceptions=True)
 
         async with self._lock:
+            self._browser_gen += 1
             while not self._pool.empty():
                 page = self._pool.get_nowait()
                 try:
@@ -507,6 +528,7 @@ class ImageRenderer:
             self._playwright = None
             self._active_pages_count = 0
             self._page_scales = {}
+            self._page_generations.clear()
             self._owned_contexts.clear()
             self._page_available.set()
             self._loop = None

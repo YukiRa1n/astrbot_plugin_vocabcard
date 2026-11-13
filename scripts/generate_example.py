@@ -5,9 +5,11 @@
 
 import asyncio
 import json
+import sys
 from pathlib import Path
 
 project_dir = Path(__file__).parent.parent
+sys.path.insert(0, str(project_dir))
 
 # CDN 背景图
 CDN_BACKGROUNDS = [
@@ -17,6 +19,7 @@ CDN_BACKGROUNDS = [
 
 async def main():
     """生成示例英语单词卡片"""
+    from core.card_renderer import CardRenderer
     from playwright.async_api import async_playwright
 
     print("正在生成示例图片...")
@@ -35,11 +38,6 @@ async def main():
 
     if not word_data:
         word_data = words[2]
-
-    # 加载模板
-    template_path = project_dir / "templates" / "card.html"
-    with open(template_path, "r", encoding="utf-8") as f:
-        template = f.read()
 
     # 替换变量
     variables = {
@@ -66,10 +64,7 @@ async def main():
         "brand": "VocabCard",
     }
 
-    html = template
-    for key, value in variables.items():
-        html = html.replace("{{ " + key + " }}", str(value) if value else "")
-        html = html.replace("{{" + key + "}}", str(value) if value else "")
+    html = CardRenderer(project_dir / "templates").render("card.html", variables)
 
     # 保存临时 HTML
     temp_html = project_dir / "temp_card.html"
@@ -81,21 +76,23 @@ async def main():
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
-            page = await browser.new_page(
-                viewport={"width": 432, "height": 540}, device_scale_factor=2
-            )
-            await page.goto(temp_html.as_uri())
-
-            # 等待背景图加载
             try:
-                await page.wait_for_load_state("networkidle", timeout=15000)
-            except Exception:
-                pass
-            await page.wait_for_timeout(3000)
+                page = await browser.new_page(
+                    viewport={"width": 432, "height": 540}, device_scale_factor=2
+                )
+                await page.goto(temp_html.as_uri())
 
-            # 截图
-            await page.screenshot(path=str(output_path), type="png", scale="device")
-            await browser.close()
+                # 等待背景图加载
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=15000)
+                except Exception:
+                    pass
+                await page.wait_for_timeout(3000)
+
+                # 截图
+                await page.screenshot(path=str(output_path), type="png", scale="device")
+            finally:
+                await browser.close()
 
         print(f"示例图片已生成: {output_path}")
     finally:

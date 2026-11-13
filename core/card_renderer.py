@@ -88,18 +88,22 @@ class CardRenderer:
             flags=_re.DOTALL,
         )
 
-        # 简单的占位符替换（支持 {{key | safe}} 用于已清洗的 CSS 值）
-        for key, value in variables.items():
-            raw_str = str(value)
-            html = _re.sub(
-                rf"\{{\{{\s*{_re.escape(key)}\s*\|\s*safe\s*\}}\}}",
-                lambda _m, s=raw_str: s,
-                html,
-            )
-            placeholder = f"{{{{{key}}}}}"
-            html = html.replace(placeholder, _html.escape(raw_str))
+        # Single-pass substitution prevents replaced values from being re-matched.
+        def _replace_var(match: _re.Match) -> str:
+            key = match.group(1)
+            if key not in variables:
+                return match.group(0)
+            value = variables[key]
+            raw_str = "" if value is None else str(value)
+            if match.group(2):
+                return raw_str
+            return _html.escape(raw_str)
 
-        return html
+        return _re.sub(
+            r"\{\{\s*(\w+)(?:\s*\|\s*(safe))?\s*\}\}",
+            _replace_var,
+            html,
+        )
 
     def _register_filters(self):
         """注册自定义 Jinja2 过滤器"""

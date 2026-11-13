@@ -83,7 +83,8 @@
     .meta {
       display: flex;
       align-items: baseline;
-      gap: 12px;
+      flex-wrap: wrap;
+      gap: 6px 12px;
       margin-bottom: 8px;
       opacity: 0.9;
     }
@@ -98,6 +99,8 @@
       background: rgba(110, 231, 183, 0.15);
       color: #6ee7b7;
       border-radius: 4px;
+      white-space: nowrap;
+      flex-shrink: 0;
     }
 
     .phonetic {
@@ -105,6 +108,8 @@
       font-size: {{phonetic_size}};
       color: rgba(255,255,255,0.7);
       letter-spacing: 0.05em;
+      min-width: 0;
+      overflow-wrap: anywhere;
     }
 
     /* 单词标题 */
