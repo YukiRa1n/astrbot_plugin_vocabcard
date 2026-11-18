@@ -123,3 +123,34 @@ async def test_configured_browser_engine_smoke(tmp_path, engine):
 
     assert output.exists()
     assert output.stat().st_size > 0
+
+
+async def test_stalled_background_still_produces_png_without_file_navigation():
+    renderer = ImageRenderer(max_pages=1)
+    requested = asyncio.Event()
+    try:
+        try:
+            page = await renderer._acquire_page(200, 200, 1)
+        except RuntimeError as exc:
+            if "is unavailable" in str(exc):
+                pytest.skip("Playwright chromium is unavailable")
+            raise
+        await page.route("file://**/*", lambda route: route.abort())
+        await page.route(
+            "https://background.invalid/slow.png", lambda route: requested.set()
+        )
+        await renderer._release_page(page)
+        image = await asyncio.wait_for(
+            renderer.render_to_bytes(
+                "<body style='background-image:url(https://background.invalid/slow.png)'>Card</body>",
+                width=200,
+                height=200,
+                scale=1,
+                network_idle_timeout_ms=1000,
+            ),
+            timeout=6,
+        )
+        assert requested.is_set()
+        assert image.startswith(b"\x89PNG\r\n\x1a\n")
+    finally:
+        await renderer.close()

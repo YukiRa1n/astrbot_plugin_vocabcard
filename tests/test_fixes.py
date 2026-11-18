@@ -615,9 +615,11 @@ async def test_select_word_returns_none_when_exhausted_without_reset():
 
 
 async def test_persist_and_restore_schedule_state(tmp_path, monkeypatch):
+    from astrbot_plugin_vocabcard.main import get_beijing_time
+
     plugin = _make_plugin()
     monkeypatch.setattr(plugin, "data_dir", tmp_path)
-    plugin._last_check_date = "2026-07-12"
+    plugin._last_check_date = get_beijing_time().date().isoformat()
     plugin._today_generated = True
     plugin._today_pushed = False
     img = tmp_path / "card.png"
@@ -632,24 +634,6 @@ async def test_persist_and_restore_schedule_state(tmp_path, monkeypatch):
     plugin2 = _make_plugin()
     monkeypatch.setattr(plugin2, "data_dir", tmp_path)
     plugin2.words = [MagicMock(word="hello")]
-    plugin2._restore_schedule_state()
-    # only restores when date matches today — force date to today
-    today = (
-        __import__("datetime")
-        .datetime.now(
-            __import__("datetime").timezone(__import__("datetime").timedelta(hours=8))
-        )
-        .strftime("%Y-%m-%d")
-    )
-    state_path = tmp_path / "schedule_state.json"
-    import json as _json
-
-    with open(state_path, "r", encoding="utf-8") as f:
-        st = _json.load(f)
-    st["date"] = today
-    with open(state_path, "w", encoding="utf-8") as f:
-        _json.dump(st, f)
-
     plugin2._restore_schedule_state()
     assert plugin2._today_generated is True
     assert plugin2._cached_image_path == str(img)
@@ -981,13 +965,13 @@ async def test_image_renderer_cancellation_releases_slot_and_wakes_waiter(tmp_pa
 
     goto_started = asyncio.Event()
 
-    async def slow_goto(_uri):
+    async def slow_content(_html, *, wait_until):
         goto_started.set()
         await asyncio.sleep(60)
 
     page1 = MagicMock()
     page1.is_closed.return_value = False
-    page1.goto = AsyncMock(side_effect=slow_goto)
+    page1.set_content = AsyncMock(side_effect=slow_content)
     page1.context = MagicMock()
     page1.context.close = AsyncMock()
 
@@ -1098,20 +1082,50 @@ async def test_schedule_next_target_wakes_at_midnight_after_daily_completion():
     assert nxt == datetime.datetime(2026, 6, 13, 0, 0, 0, tzinfo=tz)
 
 
-async def test_persist_schedule_state_updates_stale_date_across_midnight(
+async def test_scheduler_sends_again_next_morning_after_midnight_completion(
     tmp_path, monkeypatch
 ):
     import json
+    from astrbot_plugin_vocabcard import main
 
-    plugin = _make_plugin(data_dir=tmp_path)
-    plugin._last_check_date = "2000-01-01"
-    plugin._today_generated = True
-    plugin._today_pushed = True
-    await plugin._persist_schedule_state()
+    now = datetime.datetime(
+        2026, 7, 12, 23, 59, 59, tzinfo=datetime.timezone(datetime.timedelta(hours=8))
+    )
+    monkeypatch.setattr(main, "get_beijing_time", lambda: now)
+    plugin = _make_plugin(tmp_path)
+    plugin.config = {"target_groups": ["A"], "learning_mode": "sequential"}
+    deliveries = []
 
-    state = json.loads((tmp_path / "schedule_state.json").read_text(encoding="utf-8"))
-    assert state["date"] != "2000-01-01"
-    assert plugin._last_check_date == state["date"]
+    async def render(word):
+        path = tmp_path / f"card_{len(deliveries)}.png"
+        path.write_bytes(b"card")
+        return str(path)
+
+    async def send(umo, chain):
+        nonlocal now
+        deliveries.append(plugin._current_word.word)
+        if len(deliveries) == 1:
+            now += datetime.timedelta(seconds=2)
+        return True
+
+    async def sleep(seconds):
+        nonlocal now
+        state = json.loads(plugin._schedule_state_path().read_text(encoding="utf-8"))
+        if len(deliveries) == 1 and state["today_pushed"]:
+            assert state["date"] == plugin.progress["last_push_date"] == "2026-07-12"
+            assert seconds == 10
+        if len(deliveries) == 2:
+            raise asyncio.CancelledError()
+        now += datetime.timedelta(seconds=seconds)
+        assert now.date().isoformat() <= "2026-07-13"
+
+    plugin._generate_card_image = render
+    plugin.context.send_message = send
+    plugin._sleep_interruptible = sleep
+    with pytest.raises(asyncio.CancelledError):
+        await plugin._schedule_loop()
+    assert len(set(deliveries)) == 2
+    assert plugin.progress["last_push_date"] == plugin._last_check_date == "2026-07-13"
 
 
 async def test_delayed_vocab_test_does_not_mutate_configured_target_groups(tmp_path):
@@ -1569,13 +1583,13 @@ async def test_image_renderer_startup_lock_and_close_drains_inflight(tmp_path):
         init_started.set()
         renderer._loop = asyncio.get_running_loop()
 
-    async def slow_goto(_uri):
+    async def slow_content(_html, *, wait_until):
         goto_started.set()
         await asyncio.sleep(30)
 
     page = MagicMock()
     page.is_closed.return_value = False
-    page.goto = AsyncMock(side_effect=slow_goto)
+    page.set_content = AsyncMock(side_effect=slow_content)
     page.context = MagicMock()
     page.context.close = AsyncMock()
 
@@ -2070,3 +2084,108 @@ async def test_chromium_japanese_meta_accent_nowrap_and_cleaned_datasets(tmp_pat
             await renderer._release_page(page)
     finally:
         await renderer.close()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_batch_resumes_after_last_acknowledgement(tmp_path):
+    from astrbot_plugin_vocabcard.core.base_handler import WordEntry
+
+    words = [
+        WordEntry(word="daily", definition="first"),
+        WordEntry(word="other", definition="second"),
+    ]
+    p = _make_plugin(tmp_path, words=words)
+    p.config = {"target_groups": ["A", "B"], "learning_mode": "sequential"}
+    image = tmp_path / "daily.png"
+    image.write_bytes(b"initial")
+    p._generate_card_image = AsyncMock(return_value=str(image))
+    assert await p._generate_daily_card()
+    reached_b = asyncio.Event()
+
+    async def interruptible_send(umo, chain):
+        if umo == "B":
+            reached_b.set()
+            await asyncio.Event().wait()
+        return True
+
+    p.context.send_message = AsyncMock(side_effect=interruptible_send)
+    task = asyncio.create_task(p._push_daily_card())
+    await asyncio.wait_for(reached_b.wait(), timeout=2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    image.unlink()
+    resumed = _make_plugin(tmp_path, words=words)
+    resumed.config = p.config
+    replacement = tmp_path / "replacement.png"
+    replacement.write_bytes(b"regenerated")
+    resumed._generate_card_image = AsyncMock(return_value=str(replacement))
+    resumed._select_word = AsyncMock(
+        side_effect=AssertionError("must reuse pending entry")
+    )
+    assert await resumed._generate_daily_card()
+    resumed.context.send_message = AsyncMock(return_value=True)
+    await resumed._push_daily_card()
+    assert [c.args[0] for c in resumed.context.send_message.await_args_list] == ["B"]
+    assert resumed.progress["sent_words"] == ["daily"]
+    assert _make_plugin(tmp_path, words=words)._today_pushed
+
+
+async def test_manual_push_coalesces_with_scheduler_at_reply_boundaries(tmp_path):
+    from astrbot_plugin_vocabcard.main import get_beijing_time
+
+    p = _make_plugin(tmp_path)
+    p.config = {"target_groups": ["A"], "learning_mode": "sequential"}
+    p._last_check_date = get_beijing_time().date().isoformat()
+    image = tmp_path / "daily.png"
+    image.write_bytes(b"test")
+    p._generate_card_image = AsyncMock(return_value=str(image))
+    p.context.send_message = AsyncMock(return_value=True)
+    event = MagicMock()
+    event.plain_result.side_effect = str
+    command = p.cmd_push_now(event)
+    await anext(command)
+    async with p._workflow_lock:
+        await p._generate_daily_card()
+        await p._push_daily_card()
+    replies = [reply async for reply in command]
+    assert p._today_pushed and p.context.send_message.await_count == 1
+    assert "已在本次请求期间推送" in replies[-1]
+
+
+async def test_japanese_filter_keys_migration_and_pending_cache(tmp_path):
+    import json
+
+    p = _make_plugin(tmp_path)
+    p.current_language = "japanese"
+    p.current_handler = p.lang_manager.get_handler("japanese")
+    p.config = {"japanese_level": "all"}
+    all_words = p._load_words()
+    for level in ("N1", "N2", "N3", "N4"):
+        p.config["japanese_level"] = level
+        selected = p._load_words()
+        original = [w for w in all_words if w.extra_fields["level"] == f"JLPT-{level}"]
+        assert list(map(p._word_key, selected)) == list(map(p._word_key, original))
+    path = tmp_path / "progress_japanese.json"
+    path.write_text(json.dumps({"sent_words": ["空"]}), encoding="utf-8")
+    p.config["japanese_level"] = "N1"
+    p.words = p._load_words()
+    assert p._load_progress()["sent_words"] == ["空#から"]
+    p.config["japanese_level"] = "all"
+    p.words = p._load_words()
+    assert p._load_progress()["sent_words"] == ["空#から"]
+
+    p.config["japanese_level"] = "N4"
+    p.words = p._load_words()
+    p._current_word = next(w for w in p.words if w.word == "高校")
+    cached = tmp_path / "card_old.png"
+    cached.write_bytes(b"old level")
+    p._cached_image_path = str(cached)
+    p._today_generated = True
+    await p._persist_schedule_state()
+    with patch("astrbot.api.star.StarTools.get_data_dir", return_value=tmp_path):
+        resumed = VocabCardPlugin(
+            MagicMock(), {"current_language": "japanese", "japanese_level": "N1"}
+        )
+    assert not resumed._cached_image_path and not resumed._today_generated
+    assert not cached.exists()

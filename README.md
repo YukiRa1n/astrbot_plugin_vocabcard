@@ -73,6 +73,8 @@
 
 > 进度与调度状态保存在 `data/plugin_data/astrbot_plugin_vocabcard/`（`progress_<卡组ID>.json` 与 `schedule_state.json`），仅当全部已注册目标会话发送成功后才提交当日词条进度。
 
+`japanese` 卡组切换等级筛选时会保留同一词条的学习记录。旧进度文件没有保存学习时的等级。首次升级时，如果旧记录全部属于当前筛选，插件按该等级迁移，否则沿用全量词库的键。曾混用筛选的少量同形词可能需要重新学习。`japanese_n1` 至 `japanese_n4` 仍各自保存进度。
+
 ### 卡片背景
 
 | 配置项 | 默认值 | 说明 |

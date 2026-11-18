@@ -47,7 +47,7 @@
   "bg_load_timeout": {
     "description": "背景图加载等待时间",
     "type": "int",
-    "hint": "等待背景图 networkidle 的毫秒数，范围 1000-60000，建议 3000-10000",
+    "hint": "等待背景图完成加载的毫秒数，超时后直接截图，范围 1000-60000，建议 3000-10000",
     "default": 5000
   },
   "default_bg_url": {

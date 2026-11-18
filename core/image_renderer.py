@@ -8,11 +8,7 @@
 
 import asyncio
 import logging
-import os
 import sys
-import tempfile
-import uuid
-from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -401,6 +397,8 @@ class ImageRenderer:
         network_idle_timeout_ms: int,
         output_path: Optional[str] = None,
     ):
+        from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
         if self._closed:
             raise RuntimeError("ImageRenderer is closed")
 
@@ -411,22 +409,14 @@ class ImageRenderer:
         page = None
         lease_gen: Optional[int] = None
         idle_ms = max(1000, min(60000, int(network_idle_timeout_ms or 8000)))
-        temp_dir = tempfile.gettempdir()
-        temp_html_path = os.path.join(temp_dir, f"vocab_{uuid.uuid4().hex}.html")
         try:
-            fd = os.open(temp_html_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(html_content)
-
             page = await self._acquire_page(width, height, scale)
             lease_gen = self._page_generations.get(page, self._browser_gen)
-            await asyncio.wait_for(
-                page.goto(Path(temp_html_path).as_uri()), timeout=60.0
-            )
+            await page.set_content(html_content, wait_until="domcontentloaded")
             try:
-                await page.wait_for_load_state("networkidle", timeout=idle_ms)
-            except Exception as e:
-                logger.debug(f"背景图加载网络空闲等待超时: {e}")
+                await page.wait_for_load_state("load", timeout=idle_ms)
+            except PlaywrightTimeoutError:
+                logger.debug("Background loading exceeded %d ms", idle_ms)
 
             await page.wait_for_timeout(150)
 
@@ -449,11 +439,6 @@ class ImageRenderer:
         finally:
             if current_task is not None:
                 self._inflight.discard(current_task)
-            try:
-                if os.path.exists(temp_html_path):
-                    os.remove(temp_html_path)
-            except OSError:
-                pass
 
     async def render_to_file(
         self,
